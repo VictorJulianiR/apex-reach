@@ -10,7 +10,16 @@ export function renderMarkdown(report: AnalysisReport): string {
     "",
     "> This is deterministic offline evidence, not a safe-to-delete verdict. Validate org-only metadata, scheduled/queued work, configuration-driven dispatch, and external consumers before changing code.",
     "",
-    "## Executive summary",
+    "## Leadership view",
+    "",
+    `- **Deprecation opportunity:** up to **${formatPercent(report.executive.deprecationCandidatePercent)}** of production Apex was classified as a recovery candidate (${formatNumber(report.executive.deprecationCandidateCharacters)} raw characters).`,
+    `- **Currently retained:** **${formatPercent(report.executive.retainedPercent)}** was not classified as a recovery candidate by the available static evidence.`,
+    `- **Candidate actions:** ${formatNumber(report.executive.topLevelCandidateFiles)} top-level files for deprecation review and ${formatNumber(report.executive.internalRefactorCandidates)} internal methods/constructors for refactoring review.`,
+    "- **Redundant code:** not measured in this version. No duplication percentage is inferred until token-based clone analysis is available.",
+    "",
+    "These percentages are prioritization evidence, not deletion authorization. Every candidate remains linked to confidence, location, and uncertainty.",
+    "",
+    "## Technical summary",
     "",
     `- ${formatNumber(report.inventory.apexFiles)} Apex files and ${formatNumber(report.summary.symbols)} symbols analyzed.`,
     `- ${formatNumber(report.inventory.productionApexCharacters)} raw production source characters (${formatBytes(report.inventory.productionApexBytes)}).`,
@@ -81,6 +90,10 @@ function isTypeCandidate(candidate: RecoveryCandidate): boolean {
 
 function formatNumber(value: number): string {
   return new Intl.NumberFormat("en-US").format(value);
+}
+
+function formatPercent(value: number): string {
+  return `${value.toFixed(2)}%`;
 }
 
 function formatBytes(value: number): string {

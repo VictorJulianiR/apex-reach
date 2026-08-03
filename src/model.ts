@@ -126,12 +126,27 @@ export interface AnalysisSummary {
   candidateClassBytes: number;
 }
 
+export interface ExecutiveWasteSummary {
+  productionCharacters: number;
+  deprecationCandidateCharacters: number;
+  deprecationCandidatePercent: number;
+  retainedCharacters: number;
+  retainedPercent: number;
+  topLevelCandidateFiles: number;
+  internalRefactorCandidates: number;
+  redundancy: {
+    status: "not-measured";
+    reason: string;
+  };
+}
+
 export interface AnalysisReport {
   schemaVersion: typeof REPORT_SCHEMA_VERSION;
   tool: { name: "apex-reach"; version: string };
   generatedAt: string;
   inventory: ProjectInventory;
   summary: AnalysisSummary;
+  executive: ExecutiveWasteSummary;
   symbols: ApexSymbol[];
   references: ReferenceEdge[];
   entryPoints: EntryPoint[];

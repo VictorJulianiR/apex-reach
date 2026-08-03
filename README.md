@@ -15,6 +15,8 @@ It does **not** send source code to an LLM or require access to a Salesforce org
 - method candidates inside live classes for refactoring;
 - machine-readable JSON plus a review-oriented Markdown report.
 
+The executive report deliberately centers two business questions: **what can be deprecated?** and **what should be refactored because it is redundant?** Reachability provides the first percentage today. Redundancy remains explicitly unmeasured until token-based clone analysis is implemented; the tool never fabricates a number to complete a dashboard.
+
 The primary result is a **recovery candidate**, not a “safe to delete” verdict. Offline analysis cannot observe org-only metadata, queued or scheduled jobs, configuration data that was not retrieved, managed-package consumers, or external REST/SOAP callers.
 
 ## Run it

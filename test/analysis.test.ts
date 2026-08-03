@@ -52,6 +52,11 @@ describe("analyzeProject", () => {
 
     const markdown = renderMarkdown(report);
     expect(markdown).toContain("# Apex recovery analysis");
+    expect(markdown).toContain("## Leadership view");
+    expect(markdown).toContain("Deprecation opportunity");
+    expect(report.executive.deprecationCandidatePercent).toBeGreaterThan(0);
+    expect(report.executive.retainedPercent + report.executive.deprecationCandidatePercent).toBe(100);
+    expect(report.executive.redundancy.status).toBe("not-measured");
     expect(markdown).toContain("UnusedPrivate");
     expect(markdown).toContain("not a safe-to-delete verdict");
   });
