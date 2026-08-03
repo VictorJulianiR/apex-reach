@@ -19,7 +19,27 @@ The executive report deliberately centers two business questions: **what can be 
 
 The primary result is a **recovery candidate**, not a “safe to delete” verdict. Offline analysis cannot observe org-only metadata, queued or scheduled jobs, configuration data that was not retrieved, managed-package consumers, or external REST/SOAP callers.
 
-## Run it
+## Install on Windows (no admin required)
+
+Requirements: Node.js 20 or newer. Git is only required when cloning instead of downloading the ZIP.
+
+```bat
+git clone https://github.com/VictorJulianiR/apex-reach.git
+cd apex-reach
+install.bat
+```
+
+Alternatively, download and extract the repository ZIP, then double-click `install.bat`. It installs under `%LOCALAPPDATA%\apex-reach` and updates only the current user's PATH. Open a new terminal after installation.
+
+Run the analyzer:
+
+```bat
+apex-reach C:\path\to\sfdx-project --output reports\apex-reach
+```
+
+This writes `reports\apex-reach.json` and `reports\apex-reach.md`.
+
+## Development
 
 Requirements: Node.js 20 or newer.
 
