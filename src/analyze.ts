@@ -77,6 +77,7 @@ export async function analyzeProject(projectPath: string, options: AnalysisOptio
       .filter((candidate) => candidate.kind === "class" || candidate.kind === "interface" || candidate.kind === "enum")
       .reduce((total, candidate) => total + candidate.sourceBytes, 0),
   };
+  const executive = buildExecutiveSummary(apexFiles, symbols, graph.candidates, inventory.productionApexCharacters);
   const reportReferences = options.fullGraph
     ? graph.references
     : selectReferenceEvidence(graph.references, graph.reachability, graph.evidencePaths, new Set(graph.candidates.map((candidate) => candidate.symbolId)));
@@ -87,6 +88,7 @@ export async function analyzeProject(projectPath: string, options: AnalysisOptio
     generatedAt: new Date().toISOString(),
     inventory,
     summary,
+    executive,
     symbols: symbols.sort(compareSymbols),
     references: reportReferences.sort(compareLocations),
     entryPoints: graph.entryPoints.sort(compareLocations),
@@ -96,6 +98,58 @@ export async function analyzeProject(projectPath: string, options: AnalysisOptio
     uncertainties: graph.uncertainties,
     diagnostics,
   };
+}
+
+function buildExecutiveSummary(
+  files: ExtractedFile[],
+  symbols: ApexSymbol[],
+  candidates: AnalysisReport["candidates"],
+  productionCharacters: number,
+): AnalysisReport["executive"] {
+  const byId = new Map(symbols.map((symbol) => [symbol.id, symbol]));
+  const candidateTypeIds = new Set(
+    candidates
+      .filter((candidate) => candidate.kind === "class" || candidate.kind === "interface" || candidate.kind === "enum")
+      .map((candidate) => candidate.symbolId),
+  );
+  const fileCharacters = new Map(files.map((file) => [file.path, file.characters]));
+  const candidateFiles = new Set(
+    candidates
+      .filter((candidate) => candidateTypeIds.has(candidate.symbolId))
+      .map((candidate) => candidate.location.path),
+  );
+  const topLevelCharacters = [...candidateFiles]
+    .reduce((total, filePath) => total + (fileCharacters.get(filePath) ?? 0), 0);
+  const internalCandidates = candidates.filter((candidate) => {
+    if (candidate.kind !== "method" && candidate.kind !== "constructor") return false;
+    let symbol = byId.get(candidate.symbolId);
+    while (symbol?.ownerId) {
+      if (candidateTypeIds.has(symbol.ownerId)) return false;
+      symbol = byId.get(symbol.ownerId);
+    }
+    return true;
+  });
+  const memberCharacters = internalCandidates.reduce((total, candidate) => total + candidate.sourceCharacters, 0);
+  const deprecationCandidateCharacters = Math.min(productionCharacters, topLevelCharacters + memberCharacters);
+  const retainedCharacters = Math.max(0, productionCharacters - deprecationCandidateCharacters);
+  return {
+    productionCharacters,
+    deprecationCandidateCharacters,
+    deprecationCandidatePercent: percent(deprecationCandidateCharacters, productionCharacters),
+    retainedCharacters,
+    retainedPercent: percent(retainedCharacters, productionCharacters),
+    topLevelCandidateFiles: candidateFiles.size,
+    internalRefactorCandidates: internalCandidates.length,
+    redundancy: {
+      status: "not-measured",
+      reason: "Token-based duplication analysis is not implemented in this version; no redundancy percentage was inferred.",
+    },
+  };
+}
+
+function percent(part: number, whole: number): number {
+  if (whole === 0) return 0;
+  return Math.round((part / whole) * 10_000) / 100;
 }
 
 function selectReferenceEvidence(
