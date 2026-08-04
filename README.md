@@ -26,6 +26,8 @@ The primary result is a deterministic **closed-world repository classification**
 
 If parsing, dynamic type construction, duplicate symbols, or unresolved calls prevent a complete reachability conclusion, the report labels deprecation candidates **not certified**, groups every blocker by concrete cause, and lists its exact file and line. Nothing is called safe while certification is blocked. Dynamic SOQL exclusions do not invalidate resolved query-family findings: the Markdown reports resolved families and excluded call sites separately. A blocker is never converted into a confidence score. Clone similarity is a reproducible threshold measurement, not probability.
 
+When the same top-level class or trigger exists in multiple package directories, it produces one component-level blocker. Its methods are not counted again as independent blockers, and every duplicate path is printed in the certification section.
+
 The Markdown report is intentionally operational: it shows at most 25 findings per large analysis table and keeps the complete evidence set in JSON.
 
 ## Install on Windows (no admin required)

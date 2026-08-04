@@ -1,0 +1,8 @@
+{
+  "packageDirectories": [
+    { "path": "package-a", "default": true },
+    { "path": "package-b" }
+  ],
+  "namespace": "",
+  "sourceApiVersion": "65.0"
+}

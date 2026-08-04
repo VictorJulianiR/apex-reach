@@ -39,7 +39,6 @@ export function renderMarkdown(report: AnalysisReport): string {
     "## Trigger-to-Flow conversion", "", ...renderFlowAssessments(report), "",
     "## Top-level deprecation candidates", "", ...renderCandidateTable(classes), "",
     "## Method and constructor candidates", "", ...renderCandidateTable(members), "",
-    "## Analysis blocker details", "", ...renderBlockers(report), "",
     "## Review order", "",
     report.analysis.status === "blocked"
       ? "1. Resolve every reachability blocker shown above; do not delete deprecation candidates before certification is complete."
@@ -124,27 +123,13 @@ function renderCandidateTable(candidates: RecoveryCandidate[], limit = MARKDOWN_
   return rows;
 }
 
-function renderBlockers(report: AnalysisReport): string[] {
-  if (report.analysis.blockers.length === 0) return ["No analysis blockers were found. The closed-world repository conclusion is complete."];
-  const rows = [
-    "| Blocking | Code | Location | Detail |",
-    "|---|---|---|---|",
-  ];
-  for (const blocker of report.analysis.blockers.slice(0, MARKDOWN_FINDING_LIMIT)) {
-    const location = blocker.location ? `\`${blocker.location.path}:${blocker.location.line}\`` : "Project";
-    rows.push(`| ${blocker.blocksClosedWorldConclusion ? "yes" : "no (conservative resolution)"} | \`${blocker.code}\` | ${location} | ${escapeCell(blocker.message)} |`);
-  }
-  if (report.analysis.blockers.length > MARKDOWN_FINDING_LIMIT) rows.push(`\n_${formatNumber(report.analysis.blockers.length - MARKDOWN_FINDING_LIMIT)} additional blocker details are retained in JSON._`);
-  return rows;
-}
-
 function renderBlockerSummary(report: AnalysisReport): string[] {
   const blocking = report.analysis.blockers.filter((item) => item.blocksClosedWorldConclusion);
   const descriptions: Record<(typeof blocking)[number]["code"], string> = {
     "parse-error": "The Apex parser could not read a source construct, so calls inside that file are not certified.",
     "dynamic-type": "Production code computes a class name for Type.forName(...); the runtime target is not a lexical class reference.",
     "unresolved-reference": "A repository call could not be bound to its declared target.",
-    "duplicate-symbol": "The same qualified Apex symbol appears more than once in the analyzed package directories.",
+    "duplicate-symbol": "The same top-level Apex component or standalone member signature appears more than once in the analyzed package directories.",
   };
   const grouped = new Map<string, typeof blocking>();
   for (const blocker of blocking) {
@@ -163,6 +148,18 @@ function renderBlockerSummary(report: AnalysisReport): string[] {
     const remaining = items.length > 5 ? `<br>+ ${formatNumber(items.length - 5)} in JSON` : "";
     rows.push(`| \`${code}\` | ${formatNumber(items.length)} | ${descriptions[code as keyof typeof descriptions]} | ${locations}${remaining} |`);
   }
+  rows.push(
+    "",
+    "### Exact blockers",
+    "",
+    "| Cause | Primary location | Concrete evidence |",
+    "|---|---|---|",
+  );
+  for (const blocker of blocking.slice(0, MARKDOWN_FINDING_LIMIT)) {
+    const location = blocker.location ? `\`${blocker.location.path}:${blocker.location.line}\`` : "Project";
+    rows.push(`| \`${blocker.code}\` | ${location} | ${escapeCell(blocker.message)} |`);
+  }
+  if (blocking.length > MARKDOWN_FINDING_LIMIT) rows.push(`\n_${formatNumber(blocking.length - MARKDOWN_FINDING_LIMIT)} additional blocker details are retained in JSON._`);
   return rows;
 }
 

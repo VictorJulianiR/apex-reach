@@ -19,7 +19,7 @@ import {
 } from "./model.js";
 import { relativePath } from "./paths.js";
 
-const TOOL_VERSION = "0.3.1";
+const TOOL_VERSION = "0.3.2";
 
 /**
  * Stable external seam for the analyzer. It performs no writes and requires no Salesforce org.
@@ -267,15 +267,35 @@ function duplicateSymbolBlockers(symbols: ApexSymbol[]): AnalysisBlocker[] {
     if (values) values.push(symbol);
     else grouped.set(symbol.id, [symbol]);
   }
-  return [...grouped.values()]
-    .filter((values) => values.length > 1)
-    .map((values) => ({
-      code: "duplicate-symbol" as const,
-      scope: "project" as const,
-      message: `Duplicate symbol ${values[0]?.qualifiedName ?? "unknown"} appears at ${values.map((value) => `${value.location.path}:${value.location.line}`).join(", ")}.`,
-      blocksClosedWorldConclusion: true,
-      ...(values[0] ? { location: values[0].location } : {}),
-    }));
+  const duplicateGroups = [...grouped.values()].filter((values) => values.length > 1);
+  const duplicatedTopLevelIds = new Set(
+    duplicateGroups
+      .filter((values) => values.every((symbol) => symbol.ownerId === undefined && isTopLevelType(symbol)))
+      .map((values) => values[0]!.id),
+  );
+  return duplicateGroups
+    .filter((values) => {
+      const first = values[0]!;
+      return duplicatedTopLevelIds.has(first.id) || !first.ownerId || !duplicatedTopLevelIds.has(first.ownerId);
+    })
+    .map((values) => {
+      const first = values[0]!;
+      const locations = values.map((value) => `${value.location.path}:${value.location.line}`).join(", ");
+      const topLevel = duplicatedTopLevelIds.has(first.id);
+      return {
+        code: "duplicate-symbol" as const,
+        scope: "project" as const,
+        message: topLevel
+          ? `Duplicate top-level Apex component ${first.qualifiedName} appears at ${locations}. Member collisions are represented by this component-level blocker.`
+          : `Duplicate symbol ${first.qualifiedName} appears at ${locations}.`,
+        blocksClosedWorldConclusion: true,
+        location: first.location,
+      };
+    });
+}
+
+function isTopLevelType(symbol: ApexSymbol): boolean {
+  return symbol.kind === "class" || symbol.kind === "interface" || symbol.kind === "enum" || symbol.kind === "trigger";
 }
 
 function countReachability(values: Record<string, string>, expected: string): number {

@@ -57,6 +57,21 @@ describe("analyzeProject", () => {
     expect(blocker.location?.path).toContain("DynamicLookup.cls");
   });
 
+  it("reports one duplicate blocker per duplicated top-level Apex component", async () => {
+    const report = await analyzeProject(path.resolve("fixtures/duplicate-components"));
+    const blockers = report.analysis.blockers.filter((item) => item.code === "duplicate-symbol");
+
+    expect(blockers).toHaveLength(2);
+    expect(blockers.some((item) => item.message.includes("ApprovalProcessHandler"))).toBe(true);
+    expect(blockers.some((item) => item.message.includes("ContractTrigger"))).toBe(true);
+    expect(blockers.every((item) => item.message.includes("package-a") && item.message.includes("package-b"))).toBe(true);
+
+    const certificationSection = renderMarkdown(report).split("## Inventory", 1)[0]!;
+    expect(certificationSection).toContain("### Exact blockers");
+    expect(certificationSection).toContain("package-a/main/default/classes/ApprovalProcessHandler.cls");
+    expect(certificationSection).toContain("package-b/main/default/classes/ApprovalProcessHandler.cls");
+  });
+
   it("does not treat callable annotations as proof of a production call", async () => {
     const report = await analyzeProject(fixture);
     const type = report.symbols.find((symbol) => symbol.qualifiedName === "ExposedOnly")!;
