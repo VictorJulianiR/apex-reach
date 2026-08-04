@@ -258,6 +258,11 @@ function resolveReference(raw: RawReference, index: SymbolIndex): ApexSymbol[] {
     if (owned.length > 0) return unique(owned);
     const receiverSimple = normalizeName(simpleTypeName(raw.receiverType ?? ""));
     if (BUILTIN_RECEIVERS.has(receiverSimple)) return [];
+    if (raw.receiver && /^new[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\(/i.test(raw.receiver.replace(/\s+/g, ""))) return [];
+    // Unknown chained receivers are conservatively dispatched to every local
+    // method with the same name/arity. Constructed and typed receivers are
+    // resolved before this point, preventing platform calls such as
+    // `new Http().send(...)` from becoming false local edges.
     return unique(index.findMembersGlobally(raw.memberName, raw.arity));
   }
   return [];

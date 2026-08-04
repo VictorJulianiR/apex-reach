@@ -41,3 +41,24 @@ All deployable Apex and calling metadata found under every package directory dec
 **Apex footprint**:
 The UTF-8 source bytes and source characters represented by deployable Apex files in the analyzed repository.
 _Avoid_: Org usage
+
+**Clone family**:
+A deterministic set of source spans accepted by a versioned exact-token, parameterized, or verified near-miss profile. Similarity is a measurement, not confidence.
+_Avoid_: Probably duplicated
+
+**Clone coverage**:
+The union of production source intervals participating in accepted clone families, counted once globally.
+_Avoid_: Guaranteed savings
+
+**Repeated occurrence coverage**:
+The union of clone occurrences after retaining one deterministic representative per family. It measures refactoring opportunity, not final Apex reduction.
+
+**SOQL family blocker**:
+A dynamic query expression that cannot be constant-folded from repository-known string components and therefore prevents complete selector-family coverage.
+
+**Flow-eligible path**:
+A trigger call slice whose record mutation, order, bulk, transaction, recursion, security, error, and side-effect semantics all fit the supported record-triggered Flow profile.
+_Avoid_: Easy Flow, likely convertible
+
+**Flow-blocked path**:
+A trigger slice for which parsing or call resolution is incomplete. This is a coverage state, not a probability.

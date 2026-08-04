@@ -1,6 +1,6 @@
 # apex-reach
 
-`apex-reach` is a local, deterministic static analyzer for Salesforce DX repositories. It finds Apex classes and methods that are not reachable from known production entry points and emits the evidence needed for a code-capacity recovery review.
+`apex-reach` is a local, deterministic static analyzer for Salesforce DX repositories. It finds repository-unreachable Apex, duplicate/refactoring families, selector/domain consolidation opportunities, and simple trigger paths that can be moved to record-triggered Flow.
 
 It does **not** send source code to an LLM or require access to a Salesforce org. An LLM can summarize its JSON later, but it does not decide what is reachable.
 
@@ -13,13 +13,18 @@ It does **not** send source code to an LLM or require access to a Salesforce org
 - shortest evidence paths from entry points to reachable symbols;
 - top-level recovery candidates with raw size, binary repository classification, and exposure flags;
 - method candidates inside live classes for refactoring;
-- machine-readable JSON plus a review-oriented Markdown report.
+- machine-readable JSON plus a review-oriented Markdown report;
+- exact, parameterized, and verified near-miss clone families with non-overlapping source coverage;
+- static and constant-folded dynamic SOQL families, with unresolved dynamic queries reported as coverage blockers;
+- compatible DML/domain-operation families that preserve transaction and access-mode differences;
+- binary trigger-to-Flow eligibility with explicit order, bulk, transaction, recursion, security, callout, async, and coverage blockers;
+- analyzed Git branch, commit, and dirty state in every report.
 
-The executive report deliberately centers two business questions: **what can be deprecated?** and **what should be refactored because it is redundant?** Reachability provides the first percentage today. Redundancy remains explicitly unmeasured until token-based clone analysis is implemented; the tool never fabricates a number to complete a dashboard.
+The executive report keeps three lanes separate: **safe deprecation**, **duplicate/refactor coverage**, and **Apex proven removable by Flow conversion**. They are not added together because source intervals can overlap, and duplicate coverage is not guaranteed savings after abstraction overhead.
 
 The primary result is a deterministic **closed-world repository classification**. It assumes every deployable Apex file and every metadata/configuration file that defines production calls is present in the SFDX package directories. Within that declared universe a symbol is either production-reachable, test-only, or unreachable; the tool does not assign probability. Callers outside the repository, such as an external REST client, are outside the result by definition and are listed as exposure signals instead of changing reachability.
 
-If parsing, dynamic type construction, duplicate symbols, or unresolved calls prevent a complete conclusion, the report status is `blocked` and lists every blocker at its exact file and line. A blocker is never converted into “medium” or “low” confidence for unrelated candidates.
+If parsing, dynamic type construction, duplicate symbols, or unresolved calls prevent a complete conclusion, the report status is `blocked` and lists every blocker at its exact file and line. A blocker is never converted into a confidence score. Clone similarity is a reproducible threshold measurement, not probability.
 
 ## Install on Windows (no admin required)
 
@@ -96,11 +101,11 @@ Within Apex it extracts method calls, constructors, declared types, inheritance,
 
 ## Size semantics
 
-Raw characters and UTF-8 bytes are useful offline estimates, not the exact deployed-org Apex allocation. `@isTest` source is separated because Salesforce excludes it from the org Apex code limit. For exact deployed attribution, enrich a later version with Tooling API `ApexClass` / `ApexTrigger` `LengthWithoutComments`, `NamespacePrefix`, and `ManageableState`.
+Raw characters and UTF-8 bytes are useful offline estimates, not the exact deployed-org Apex allocation. `@isTest` source is separated because Salesforce excludes it from the org Apex code limit. Flow is separate metadata and does not consume the 6 MB Apex code allowance, although synchronous Flow shares transaction governors. A later online enrichment can use Tooling API `LengthWithoutComments` without changing the offline classifications.
 
 ## Validation
 
-The test suite covers production/test-only reachability, trigger dispatch, LWC imports, Aura bundle calls, Custom Metadata, annotation-only dead code, computed dynamic blockers, binary candidates, and report generation.
+The test suite covers reachability and metadata entry points plus clone profiles, selector families, dynamic SOQL blockers, keyword and `Database.*` DML, Flow eligibility/blockers, revision capture, report generation, and the Windows installer.
 
 ```sh
 npm run check
@@ -113,4 +118,4 @@ The analyzer was also exercised against Salesforce-maintained public SFDX reposi
 
 The stable module interface is a single read-only operation: `analyzeProject(path, options) -> versioned report`. Discovery, Apex parsing, complete text-metadata scanning, graph resolution, blocker detection, and presentation remain behind that seam. See [domain language](CONTEXT.md) and [ADR 0001](docs/adr/0001-evidence-first-static-analysis.md).
 
-The next highest-value extension is deterministic SOQL-family analysis for selector-layer refactoring, kept separate from the deletion percentage. The offline report remains the source of facts.
+The offline JSON remains the source of facts; Markdown only organizes those facts for review. See [duplicate/Flow research](docs/research/duplicate-apex-and-flow-conversion.md) and [ADR 0002](docs/adr/0002-duplicate-and-flow-analysis.md).

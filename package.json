@@ -1,6 +1,6 @@
 {
   "name": "apex-reach",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Evidence-first static reachability analysis for Salesforce DX repositories",
   "type": "module",
   "main": "./dist/index.js",
@@ -19,6 +19,7 @@
     "dist/*.d.ts",
     "dist/*.js.map",
     "dist/apex",
+    "dist/quality",
     "README.md",
     "LICENSE"
   ],

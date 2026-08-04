@@ -10,27 +10,46 @@ import {
   type CreatorContext,
   type DotExpressionContext,
   type DotMethodCallContext,
+  type DeleteStatementContext,
+  type DoWhileStatementContext,
   type EnhancedForControlContext,
   type EnumDeclarationContext,
+  type ExpressionStatementContext,
   type FieldDeclarationContext,
+  type ForStatementContext,
   type FormalParameterContext,
+  type IfStatementContext,
   type InterfaceDeclarationContext,
   type InterfaceMethodDeclarationContext,
+  type InsertStatementContext,
   type LocalVariableDeclarationContext,
   type MethodCallContext,
   type MethodDeclarationContext,
+  type MergeStatementContext,
   type ApexParserRuleContext,
+  type QueryContext,
+  type StatementContext,
+  type SwitchStatementContext,
+  type ThrowStatementContext,
   type TriggerUnitContext,
+  type TryStatementContext,
   type TypeRefContext,
+  type UndeleteStatementContext,
+  type UpdateStatementContext,
+  type UpsertStatementContext,
+  type WhileStatementContext,
 } from "@apexdevtools/apex-parser";
 import type {
   ApexSymbol,
   AnalysisBlocker,
+  DmlObservation,
   EntryPoint,
+  ExecutableBehavior,
   ExposureSignal,
   ExtractedFile,
   ParseDiagnostic,
   RawReference,
+  SoqlObservation,
   SourceLocation,
   SymbolKind,
 } from "../model.js";
@@ -118,8 +137,10 @@ class ExtractionListener extends ApexParserBaseListener {
   private readonly entryPoints: EntryPoint[] = [];
   private readonly blockers: AnalysisBlocker[] = [];
   private readonly exposures: ExposureSignal[] = [];
+  private readonly behaviors: ExecutableBehavior[] = [];
   private readonly typeStack: Scope[] = [];
   private readonly executableStack: Scope[] = [];
+  private readonly behaviorStack: ExecutableBehavior[] = [];
 
   constructor(
     private readonly source: string,
@@ -132,6 +153,7 @@ class ExtractionListener extends ApexParserBaseListener {
   result(): ExtractedFile {
     return {
       path: this.filePath,
+      source: this.source,
       characters: this.source.length,
       bytes: Buffer.byteLength(this.source, "utf8"),
       symbols: this.symbols,
@@ -139,6 +161,7 @@ class ExtractionListener extends ApexParserBaseListener {
       entryPoints: this.entryPoints,
       blockers: this.blockers,
       exposures: this.exposures,
+      behaviors: this.behaviors,
       diagnostics: this.diagnostics,
     };
   }
@@ -150,10 +173,12 @@ class ExtractionListener extends ApexParserBaseListener {
     const scope = { symbol, variables: new Map<string, string>() };
     this.typeStack.push(scope);
     this.executableStack.push(scope);
+    this.behaviorStack.push(newBehavior(symbol.id));
     this.addEntry(symbol, "platform", "Apex trigger event", false);
   }
 
   exitTriggerUnit(): void {
+    this.finishBehavior();
     this.executableStack.pop();
     this.typeStack.pop();
   }
@@ -204,14 +229,16 @@ class ExtractionListener extends ApexParserBaseListener {
     if (!owner) return;
     const modifiers = modifiersOf(ctx);
     const parameterTypes = parameterTypesOf(ctx.formalParameters());
-    const symbol = this.makeMemberSymbol("method", owner.symbol, ctx.id().getText(), parameterTypes, ctx, modifiers);
+    const symbol = this.makeMemberSymbol("method", owner.symbol, ctx.id().getText(), parameterTypes, ctx, modifiers, parameterNamesOf(ctx.formalParameters()));
     this.symbols.push(symbol);
     this.executableStack.push({ symbol, variables: new Map<string, string>() });
+    this.behaviorStack.push(newBehavior(symbol.id));
     this.classifyMethodEntry(symbol, owner.symbol);
     this.addVisibilityExposure(symbol);
   }
 
   exitMethodDeclaration(): void {
+    this.finishBehavior();
     this.executableStack.pop();
   }
 
@@ -220,7 +247,7 @@ class ExtractionListener extends ApexParserBaseListener {
     if (!owner) return;
     const modifiers = [...modifiersOf(ctx), ...ctx.modifier_list().map((item) => item.getText())];
     const parameterTypes = parameterTypesOf(ctx.formalParameters());
-    const symbol = this.makeMemberSymbol("method", owner.symbol, ctx.id().getText(), parameterTypes, ctx, modifiers);
+    const symbol = this.makeMemberSymbol("method", owner.symbol, ctx.id().getText(), parameterTypes, ctx, modifiers, parameterNamesOf(ctx.formalParameters()));
     this.symbols.push(symbol);
     this.addVisibilityExposure(symbol);
   }
@@ -229,13 +256,15 @@ class ExtractionListener extends ApexParserBaseListener {
     const owner = this.currentType();
     if (!owner) return;
     const parameterTypes = parameterTypesOf(ctx.formalParameters());
-    const symbol = this.makeMemberSymbol("constructor", owner.symbol, owner.symbol.name, parameterTypes, ctx, modifiersOf(ctx));
+    const symbol = this.makeMemberSymbol("constructor", owner.symbol, owner.symbol.name, parameterTypes, ctx, modifiersOf(ctx), parameterNamesOf(ctx.formalParameters()));
     this.symbols.push(symbol);
     this.executableStack.push({ symbol, variables: new Map<string, string>() });
+    this.behaviorStack.push(newBehavior(symbol.id));
     this.addVisibilityExposure(symbol);
   }
 
   exitConstructorDeclaration(): void {
+    this.finishBehavior();
     this.executableStack.pop();
   }
 
@@ -251,12 +280,14 @@ class ExtractionListener extends ApexParserBaseListener {
   enterFormalParameter(ctx: FormalParameterContext): void {
     const scope = this.currentExecutable();
     if (scope) scope.variables.set(normalizeName(ctx.id().getText()), ctx.typeRef().getText());
+    this.recordAdvancedCollection(ctx.typeRef().getText());
   }
 
   enterLocalVariableDeclaration(ctx: LocalVariableDeclarationContext): void {
     const scope = this.currentExecutable();
     if (!scope) return;
     const type = ctx.typeRef().getText();
+    this.recordAdvancedCollection(type);
     for (const variable of ctx.variableDeclarators().variableDeclarator_list()) {
       scope.variables.set(normalizeName(variable.id().getText()), type);
     }
@@ -264,10 +295,106 @@ class ExtractionListener extends ApexParserBaseListener {
 
   enterEnhancedForControl(ctx: EnhancedForControlContext): void {
     this.currentExecutable()?.variables.set(normalizeName(ctx.id().getText()), ctx.typeRef().getText());
+    this.currentBehavior()?.enhancedForLoops.push({ variable: ctx.id().getText(), collection: ctx.expression().getText() });
+  }
+
+  enterStatement(_ctx: StatementContext): void {
+    const behavior = this.currentBehavior();
+    if (behavior) behavior.statements += 1;
+  }
+
+  enterIfStatement(_ctx: IfStatementContext): void {
+    const behavior = this.currentBehavior();
+    if (behavior) behavior.branches += 1;
+  }
+
+  enterSwitchStatement(_ctx: SwitchStatementContext): void {
+    const behavior = this.currentBehavior();
+    if (behavior) behavior.branches += 1;
+  }
+
+  enterForStatement(_ctx: ForStatementContext): void {
+    const behavior = this.currentBehavior();
+    if (behavior) behavior.loops += 1;
+  }
+
+  enterWhileStatement(_ctx: WhileStatementContext): void {
+    const behavior = this.currentBehavior();
+    if (behavior) behavior.loops += 1;
+  }
+
+  enterDoWhileStatement(_ctx: DoWhileStatementContext): void {
+    const behavior = this.currentBehavior();
+    if (behavior) behavior.loops += 1;
+  }
+
+  enterTryStatement(_ctx: TryStatementContext): void {
+    const behavior = this.currentBehavior();
+    if (behavior) behavior.tryBlocks += 1;
+  }
+
+  enterThrowStatement(_ctx: ThrowStatementContext): void {
+    const behavior = this.currentBehavior();
+    if (behavior) behavior.throws += 1;
+  }
+
+  enterExpressionStatement(ctx: ExpressionStatementContext): void {
+    const behavior = this.currentBehavior();
+    if (!behavior) return;
+    const assignment = /^(.+?)(?:\+=|-=|\*=|\/=|=(?!=))/.exec(ctx.expression().getText());
+    if (assignment?.[1]) {
+      behavior.assignments += 1;
+      behavior.assignmentTargets.push(assignment[1]);
+    }
+  }
+
+  enterQuery(ctx: QueryContext): void {
+    const behavior = this.currentBehavior();
+    const symbolId = this.currentSourceId();
+    if (!behavior || !symbolId) return;
+    const object = ctx.fromNameList().getText().split(",", 1)[0] ?? "unknown";
+    const fields = ctx.selectList().selectEntry_list().map((entry) => entry.getText()).sort((left, right) => left.localeCompare(right));
+    const filterShape = normalizeSoqlFragment(ctx.whereClause()?.getText() ?? "");
+    const observation: SoqlObservation = {
+      symbolId,
+      object,
+      fields,
+      filterShape,
+      normalizedQuery: normalizeSoqlFragment(ctx.getText()),
+      dynamic: false,
+      ...soqlSemantics(ctx.getText(), this.currentType()?.symbol),
+      location: this.location(ctx),
+    };
+    behavior.queries.push(observation);
+  }
+
+  enterInsertStatement(ctx: InsertStatementContext): void {
+    this.recordDml("insert", ctx.expression().getText(), ctx);
+  }
+
+  enterUpdateStatement(ctx: UpdateStatementContext): void {
+    this.recordDml("update", ctx.expression().getText(), ctx);
+  }
+
+  enterDeleteStatement(ctx: DeleteStatementContext): void {
+    this.recordDml("delete", ctx.expression().getText(), ctx);
+  }
+
+  enterUndeleteStatement(ctx: UndeleteStatementContext): void {
+    this.recordDml("undelete", ctx.expression().getText(), ctx);
+  }
+
+  enterUpsertStatement(ctx: UpsertStatementContext): void {
+    this.recordDml("upsert", ctx.expression().getText(), ctx);
+  }
+
+  enterMergeStatement(ctx: MergeStatementContext): void {
+    this.recordDml("merge", ctx.expression_list().map((expression) => expression.getText()).join(","), ctx);
   }
 
   enterMethodCall(ctx: MethodCallContext): void {
     const name = ctx.id()?.getText() ?? ctx.getText().split("(", 1)[0] ?? "";
+    this.currentBehavior()?.callDetails.push(ctx.getText());
     this.references.push({
       sourceId: this.currentSourceId(),
       kind: "call",
@@ -284,7 +411,13 @@ class ExtractionListener extends ApexParserBaseListener {
     const parent = ctx.parentCtx as DotExpressionContext;
     const receiver = parent.expression().getText();
     const name = ctx.anyId().getText();
-    const receiverType = this.resolveVariableType(receiver) ?? receiver;
+    const constructedReceiver = /^new([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\(/i.exec(receiver)?.[1];
+    const receiverType = normalizeName(receiver) === "this"
+      ? (this.currentType()?.symbol.qualifiedName ?? receiver)
+      : normalizeName(receiver) === "super"
+        ? (this.currentType()?.symbol.superclass ?? receiver)
+        : (constructedReceiver ?? this.resolveVariableType(receiver) ?? receiver);
+    this.currentBehavior()?.callDetails.push(parent.getText());
     this.references.push({
       sourceId: this.currentSourceId(),
       kind: "call",
@@ -296,6 +429,24 @@ class ExtractionListener extends ApexParserBaseListener {
       location: this.location(ctx),
       detail: parent.getText(),
     });
+
+    if (normalizeName(simpleTypeName(receiverType)) === "database") {
+      const normalizedMethod = normalizeName(name);
+      const argumentsList = ctx.expressionList()?.expression_list() ?? [];
+      const firstArgument = argumentsList[0]?.getText() ?? "";
+      if (normalizedMethod === "query" || normalizedMethod === "querywithbinds") {
+        this.recordDynamicQuery(firstArgument, ctx);
+      }
+      const databaseDml = new Map<string, DmlObservation["operation"]>([
+        ["insert", "insert"], ["update", "update"], ["delete", "delete"],
+        ["undelete", "undelete"], ["upsert", "upsert"], ["merge", "merge"],
+      ]).get(normalizedMethod);
+      if (databaseDml && firstArgument) {
+        const dmlArguments = argumentsList.map((item) => item.getText());
+        const { allOrNone, accessMode } = databaseDmlOptions(databaseDml, dmlArguments);
+        this.recordDml(databaseDml, firstArgument, ctx, allOrNone, accessMode);
+      }
+    }
 
     if (normalizeName(simpleTypeName(receiverType)) === "type" && normalizeName(name) === "forname") {
       const argument = ctx.expressionList()?.getText() ?? "";
@@ -406,6 +557,7 @@ class ExtractionListener extends ApexParserBaseListener {
     parameterTypes: string[],
     ctx: ContextLike,
     modifiers: string[],
+    parameterNames: string[] = [],
   ): ApexSymbol {
     const annotations = annotationsOf(modifiers);
     const signature = parameterTypes.map(normalizeName).join(",");
@@ -417,6 +569,7 @@ class ExtractionListener extends ApexParserBaseListener {
       ownerId: owner.id,
       arity: parameterTypes.length,
       parameterTypes,
+      parameterNames,
       modifiers: normalizeModifiers(modifiers),
       annotations,
       interfaces: [],
@@ -470,6 +623,76 @@ class ExtractionListener extends ApexParserBaseListener {
       reason,
       location: symbol.location,
     });
+  }
+
+  private recordDml(
+    operation: DmlObservation["operation"],
+    targetExpression: string,
+    ctx: ContextLike,
+    allOrNone: DmlObservation["allOrNone"] = "default",
+    accessMode: DmlObservation["accessMode"] = /\basuser\b/i.test(ctx.getText()) ? "user" : /\bassystem\b/i.test(ctx.getText()) ? "system" : "default",
+  ): void {
+    const behavior = this.currentBehavior();
+    const symbolId = this.currentSourceId();
+    if (!behavior || !symbolId) return;
+    const targetType = this.inferDmlTargetType(targetExpression);
+    behavior.dml.push({
+      symbolId,
+      operation,
+      targetExpression,
+      ...(targetType ? { targetType } : {}),
+      allOrNone,
+      accessMode,
+      location: this.location(ctx),
+    });
+  }
+
+  private recordDynamicQuery(expression: string, ctx: ContextLike): void {
+    const behavior = this.currentBehavior();
+    const symbolId = this.currentSourceId();
+    if (!behavior || !symbolId) return;
+    const folded = foldApexString(expression);
+    const parsed = folded ? parseDynamicSoql(folded) : undefined;
+    if (!parsed) {
+      behavior.dynamicQueryGaps.push({
+        symbolId,
+        expression,
+        reason: folded ? "The constant string is not a supported SELECT query." : "The query string contains a value that cannot be constant-folded from repository source.",
+        location: this.location(ctx),
+      });
+      return;
+    }
+    behavior.queries.push({
+      ...parsed,
+      ...soqlSemantics(folded!, this.currentType()?.symbol),
+      symbolId,
+      dynamic: true,
+      location: this.location(ctx),
+    });
+  }
+
+  private recordAdvancedCollection(typeName: string): void {
+    if (/^(?:Map|Set)</i.test(typeName)) this.currentBehavior()?.advancedCollectionTypes.push(typeName);
+  }
+
+  private inferDmlTargetType(expression: string): string | undefined {
+    const constructed = /^new([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)/.exec(expression)?.[1];
+    const base = /^[A-Za-z_]\w*/.exec(expression)?.[0];
+    const declared = constructed ?? (base ? this.resolveVariableType(base) : undefined);
+    if (!declared) return undefined;
+    const collectionMember = /^(?:List|Set)<(.+)>$/i.exec(declared)?.[1];
+    return simpleTypeName(collectionMember ?? declared);
+  }
+
+  private currentBehavior(): ExecutableBehavior | undefined {
+    return this.behaviorStack.at(-1);
+  }
+
+  private finishBehavior(): void {
+    const behavior = this.behaviorStack.pop();
+    if (!behavior) return;
+    behavior.callDetails = [...new Set(behavior.callDetails)];
+    this.behaviors.push(behavior);
   }
 
   private resolveVariableType(receiver: string): string | undefined {
@@ -539,6 +762,10 @@ function parameterTypesOf(ctx: { formalParameterList(): { formalParameter_list()
   return ctx.formalParameterList()?.formalParameter_list().map((parameter) => parameter.typeRef().getText()) ?? [];
 }
 
+function parameterNamesOf(ctx: { formalParameterList(): { formalParameter_list(): FormalParameterContext[] } | null }): string[] {
+  return ctx.formalParameterList()?.formalParameter_list().map((parameter) => parameter.id().getText()) ?? [];
+}
+
 function expressionCount(ctx: { expression_list(): unknown[] } | null): number {
   return ctx?.expression_list().length ?? 0;
 }
@@ -557,4 +784,118 @@ function isInheritanceType(ctx: TypeRefContext): boolean {
     if (name.includes("Method") || name.includes("Parameter") || name.includes("Variable")) return false;
   }
   return false;
+}
+
+function newBehavior(symbolId: string): ExecutableBehavior {
+  return {
+    symbolId,
+    statements: 0,
+    branches: 0,
+    loops: 0,
+    tryBlocks: 0,
+    throws: 0,
+    assignments: 0,
+    assignmentTargets: [],
+    enhancedForLoops: [],
+    advancedCollectionTypes: [],
+    callDetails: [],
+    queries: [],
+    dynamicQueryGaps: [],
+    dml: [],
+  };
+}
+
+function foldApexString(expression: string): string | undefined {
+  const pieces = expression.replace(/^\((.*)\)$/s, "$1").split("+").map((piece) => piece.trim());
+  if (pieces.length === 0 || pieces.some((piece) => !/^'(?:\\.|[^'])*'$/.test(piece))) return undefined;
+  return pieces.map((piece) => piece.slice(1, -1).replace(/\\'/g, "'").replace(/\\\\/g, "\\")).join("");
+}
+
+function parseDynamicSoql(query: string): Omit<SoqlObservation, "symbolId" | "dynamic" | "location" | "securityMode" | "sharingContext" | "aggregate" | "locking"> | undefined {
+  const match = /^\s*select\s+([\s\S]+?)\s+from\s+([A-Za-z_]\w*)([\s\S]*)$/i.exec(query);
+  if (!match) return undefined;
+  const tail = match[3] ?? "";
+  const where = /\bwhere\b([\s\S]*?)(?=\b(?:group\s+by|having|order\s+by|limit|offset|for\s+(?:update|view|reference)|with\s+)\b|$)/i.exec(tail)?.[1] ?? "";
+  return {
+    object: match[2]!,
+    fields: splitTopLevel(match[1]!, ",").map((field) => field.trim()).filter(Boolean).sort((left, right) => left.localeCompare(right)),
+    filterShape: normalizeSoqlFragment(where),
+    normalizedQuery: normalizeSoqlFragment(query),
+  };
+}
+
+function splitTopLevel(value: string, separator: string): string[] {
+  const result: string[] = [];
+  let depth = 0;
+  let quoted = false;
+  let start = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    if (char === "'" && value[index - 1] !== "\\") quoted = !quoted;
+    if (quoted) continue;
+    if (char === "(") depth += 1;
+    else if (char === ")") depth -= 1;
+    else if (char === separator && depth === 0) {
+      result.push(value.slice(start, index));
+      start = index + 1;
+    }
+  }
+  result.push(value.slice(start));
+  return result;
+}
+
+function normalizeSoqlFragment(value: string): string {
+  return value
+    .replace(/'(?:\\.|[^'])*'/g, "?")
+    .replace(/\b\d+(?:\.\d+)?\b/g, "?")
+    .replace(/:[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*/g, ":bind")
+    .replace(/\s+/g, "")
+    .toLowerCase();
+}
+
+function soqlSemantics(query: string, owner: ApexSymbol | undefined): Pick<SoqlObservation, "securityMode" | "sharingContext" | "aggregate" | "locking"> {
+  const normalized = query.replace(/\s+/g, "").toLowerCase();
+  const modifiers = owner?.modifiers.join("").toLowerCase() ?? "";
+  return {
+    securityMode: normalized.includes("withuser_mode") || normalized.includes("withusermode") ? "user"
+      : normalized.includes("withsystem_mode") || normalized.includes("withsystemmode") ? "system"
+        : normalized.includes("withsecurity_enforced") ? "security-enforced" : "unspecified",
+    sharingContext: modifiers.includes("withsharing") ? "with-sharing"
+      : modifiers.includes("withoutsharing") ? "without-sharing"
+        : modifiers.includes("inheritedsharing") ? "inherited-sharing" : "unspecified",
+    aggregate: /(?:count|sum|avg|min|max)\(/i.test(normalized) || normalized.includes("groupby"),
+    locking: normalized.includes("forupdate"),
+  };
+}
+
+function booleanOption(value: string | undefined): DmlObservation["allOrNone"] {
+  if (value === undefined) return "default";
+  if (/^true$/i.test(value)) return "true";
+  if (/^false$/i.test(value)) return "false";
+  if (/^(?:AccessLevel\.|System\.)/i.test(value)) return "default";
+  return "dynamic";
+}
+
+function accessLevelOption(values: string[]): DmlObservation["accessMode"] {
+  if (values.some((value) => /(?:AccessLevel\.)?USER_MODE/i.test(value))) return "user";
+  if (values.some((value) => /(?:AccessLevel\.)?SYSTEM_MODE/i.test(value))) return "system";
+  return "default";
+}
+
+function databaseDmlOptions(
+  operation: DmlObservation["operation"],
+  values: string[],
+): Pick<DmlObservation, "allOrNone" | "accessMode"> {
+  const accessMode = accessLevelOption(values);
+  const booleanIndex = values.findIndex((value, index) => index > 0 && /^(?:true|false)$/i.test(value));
+  if (booleanIndex >= 0) return { allOrNone: booleanOption(values[booleanIndex]), accessMode };
+  const nonAccessOptions = values.slice(1).filter((value) => !/(?:AccessLevel\.)?(?:USER|SYSTEM)_MODE/i.test(value));
+  if (nonAccessOptions.length === 0) return { allOrNone: "default", accessMode };
+  // Upsert's external-id field and merge's duplicate-record argument are not
+  // allOrNone parameters; only a following option can be a computed Boolean.
+  if (operation === "upsert" && nonAccessOptions.length === 1 && /(?:Schema\.)?[A-Za-z_]\w*\.[A-Za-z_]\w*/.test(nonAccessOptions[0]!)) {
+    return { allOrNone: "default", accessMode };
+  }
+  if (operation === "merge" && nonAccessOptions.length === 1) return { allOrNone: "default", accessMode };
+  return { allOrNone: "dynamic", accessMode };
 }

@@ -1,4 +1,4 @@
-export const REPORT_SCHEMA_VERSION = "2.0.0" as const;
+export const REPORT_SCHEMA_VERSION = "3.0.0" as const;
 
 export type SymbolKind = "class" | "interface" | "enum" | "trigger" | "method" | "constructor";
 export type Reachability = "production" | "test-only" | "unreachable";
@@ -21,6 +21,7 @@ export interface ApexSymbol {
   ownerId?: string;
   arity?: number;
   parameterTypes?: string[];
+  parameterNames?: string[];
   modifiers: string[];
   annotations: string[];
   interfaces: string[];
@@ -101,6 +102,177 @@ export interface ParseDiagnostic {
   message: string;
 }
 
+export interface SoqlObservation {
+  symbolId: string;
+  object: string;
+  fields: string[];
+  filterShape: string;
+  normalizedQuery: string;
+  dynamic: boolean;
+  securityMode: "user" | "system" | "security-enforced" | "unspecified";
+  sharingContext: "with-sharing" | "without-sharing" | "inherited-sharing" | "unspecified";
+  aggregate: boolean;
+  locking: boolean;
+  location: SourceLocation;
+}
+
+export interface DmlObservation {
+  symbolId: string;
+  operation: "insert" | "update" | "delete" | "undelete" | "upsert" | "merge";
+  targetExpression: string;
+  targetType?: string;
+  allOrNone: "default" | "true" | "false" | "dynamic";
+  accessMode: "default" | "user" | "system" | "dynamic";
+  location: SourceLocation;
+}
+
+export interface DynamicQueryGap {
+  symbolId: string;
+  expression: string;
+  reason: string;
+  location: SourceLocation;
+}
+
+export interface ExecutableBehavior {
+  symbolId: string;
+  statements: number;
+  branches: number;
+  loops: number;
+  tryBlocks: number;
+  throws: number;
+  assignments: number;
+  assignmentTargets: string[];
+  enhancedForLoops: Array<{ variable: string; collection: string }>;
+  advancedCollectionTypes: string[];
+  callDetails: string[];
+  queries: SoqlObservation[];
+  dynamicQueryGaps: DynamicQueryGap[];
+  dml: DmlObservation[];
+}
+
+export interface CloneOccurrence {
+  symbolId: string;
+  path: string;
+  startLine: number;
+  endLine: number;
+  startColumn: number;
+  endColumn: number;
+  tokenCount: number;
+  sourceCharacters: number;
+}
+
+export interface CloneGroup {
+  id: string;
+  kind: "exact" | "parameterized" | "near-miss";
+  profile: "exact-token" | "identifier-and-literal-parameterized" | "verified-near-miss-strong" | "verified-near-miss-broad";
+  similarity: number;
+  duplicatedTokens: number;
+  duplicatedCharacters: number;
+  differences: string[];
+  occurrences: CloneOccurrence[];
+}
+
+export interface QueryFamily {
+  id: string;
+  object: string;
+  kind: "exact-query" | "selector-family";
+  commonFields: string[];
+  unionFields: string[];
+  filterShapes: string[];
+  occurrences: SoqlObservation[];
+  recommendation: string;
+}
+
+export interface DmlFamily {
+  id: string;
+  operation: DmlObservation["operation"];
+  targetType: string;
+  occurrences: DmlObservation[];
+  recommendation: string;
+}
+
+export interface DuplicateAnalysis {
+  coverage: {
+    status: "complete" | "blocked";
+    blockedFiles: string[];
+    testFilesExcluded: number;
+  };
+  productionTokens: number;
+  cloneCoverageTokens: number;
+  cloneCoverageTokenPercent: number;
+  cloneCoverageCharacters: number;
+  cloneCoverageCharacterPercent: number;
+  duplicatedTokens: number;
+  duplicatedTokenPercent: number;
+  duplicatedCharacters: number;
+  duplicatedCharacterPercent: number;
+  cloneGroups: CloneGroup[];
+  queryFamilies: QueryFamily[];
+  queryCoverage: {
+    status: "complete" | "blocked";
+    unresolvedDynamicQueries: DynamicQueryGap[];
+  };
+  dmlFamilies: DmlFamily[];
+  algorithm: {
+    minimumFragmentTokens: number;
+    minimumMethodTokens: number;
+    nearMissSimilarity: number;
+    nearMissBroadSimilarity: number;
+    nearMissBroadMinimumTokens: number;
+    testCodeExcluded: true;
+    overlappingIntervalsDeduplicated: true;
+  };
+}
+
+export interface FlowMigrationAssessment {
+  triggerSymbolId: string;
+  triggerName: string;
+  object: string;
+  events: string[];
+  status: "eligible" | "ineligible" | "blocked";
+  kind: "before-save-field-update" | "after-save-record-action" | "after-save-orchestration" | "unsupported";
+  pathSymbolIds: string[];
+  statements: number;
+  branches: number;
+  loops: number;
+  queries: SoqlObservation[];
+  dml: DmlObservation[];
+  reclaimableArtifacts: Array<{
+    path: string;
+    action: "delete-file" | "remove-member";
+    symbolIds: string[];
+    sourceCharacters: number;
+  }>;
+  reclaimableCharacters: number;
+  reclaimablePercent: number;
+  reasons: string[];
+  blockers: string[];
+  location: SourceLocation;
+}
+
+export interface FlowMigrationAnalysis {
+  eligibleTriggers: number;
+  blockedTriggers: number;
+  ineligibleTriggers: number;
+  reclaimableCharacters: number;
+  reclaimablePercent: number;
+  assessments: FlowMigrationAssessment[];
+}
+
+export interface RecordAutomationObservation {
+  kind: "flow" | "workflow";
+  object: string;
+  timing: string;
+  path: string;
+}
+
+export interface RepositoryRevision {
+  available: boolean;
+  branch?: string;
+  commit?: string;
+  dirty?: boolean;
+}
+
 export interface ProjectInventory {
   root: string;
   sourceRoots: string[];
@@ -139,8 +311,19 @@ export interface ExecutiveWasteSummary {
   topLevelCandidateFiles: number;
   internalRefactorCandidates: number;
   redundancy: {
-    status: "not-measured";
+    status: "measured";
+    coveredCharacters: number;
+    coveredPercent: number;
+    duplicatedCharacters: number;
+    duplicatedPercent: number;
+    cloneGroups: number;
+    queryFamilies: number;
     reason: string;
+  };
+  flowAutomation: {
+    eligibleTriggers: number;
+    reclaimableCharacters: number;
+    reclaimablePercent: number;
   };
 }
 
@@ -151,6 +334,9 @@ export interface AnalysisReport {
   inventory: ProjectInventory;
   summary: AnalysisSummary;
   executive: ExecutiveWasteSummary;
+  revision: RepositoryRevision;
+  duplicates: DuplicateAnalysis;
+  flowMigration: FlowMigrationAnalysis;
   analysis: {
     universe: "repository";
     assumption: string;
@@ -175,6 +361,7 @@ export interface AnalysisOptions {
 
 export interface ExtractedFile {
   path: string;
+  source: string;
   characters: number;
   bytes: number;
   symbols: ApexSymbol[];
@@ -182,5 +369,6 @@ export interface ExtractedFile {
   entryPoints: EntryPoint[];
   blockers: AnalysisBlocker[];
   exposures: ExposureSignal[];
+  behaviors: ExecutableBehavior[];
   diagnostics: ParseDiagnostic[];
 }

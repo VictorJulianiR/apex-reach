@@ -16,7 +16,7 @@ interface CliOptions {
 const program = new Command()
   .name("apex-reach")
   .description("Evidence-first recovery analysis for Salesforce DX Apex code")
-  .version("0.2.0")
+  .version("0.3.0")
   .argument("[project]", "SFDX project directory", ".")
   .addOption(new Option("-f, --format <format>", "report format").choices(["json", "markdown", "both"]).default("both"))
   .option("-o, --output <base>", "output file base (extensions are added)", "apex-reach-report")
@@ -41,7 +41,7 @@ const program = new Command()
       written.push(markdownPath);
     }
     const elapsed = ((performance.now() - started) / 1000).toFixed(1);
-    process.stderr.write(`Done in ${elapsed}s. ${report.summary.candidateClasses} top-level and ${report.summary.candidateMethods} member candidates.\n`);
+    process.stderr.write(`Done in ${elapsed}s. ${report.summary.candidateClasses} top-level deprecation candidates, ${report.duplicates.cloneGroups.length} clone families, ${report.flowMigration.eligibleTriggers} Flow-eligible triggers.\n`);
     for (const file of written) process.stdout.write(`${file}\n`);
   });
 

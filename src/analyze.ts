@@ -4,6 +4,10 @@ import { extractApexFile } from "./apex/extract.js";
 import { discoverProject } from "./discovery.js";
 import { buildGraph } from "./graph.js";
 import { extractMetadataReferences } from "./metadata.js";
+import { analyzeDuplicates } from "./quality/duplicates.js";
+import { analyzeFlowMigration } from "./quality/flow.js";
+import { inspectRecordAutomation } from "./quality/automation.js";
+import { readRepositoryRevision } from "./revision.js";
 import {
   REPORT_SCHEMA_VERSION,
   type AnalysisBlocker,
@@ -15,7 +19,7 @@ import {
 } from "./model.js";
 import { relativePath } from "./paths.js";
 
-const TOOL_VERSION = "0.2.0";
+const TOOL_VERSION = "0.3.0";
 
 /**
  * Stable external seam for the analyzer. It performs no writes and requires no Salesforce org.
@@ -24,8 +28,10 @@ export async function analyzeProject(projectPath: string, options: AnalysisOptio
   const root = path.resolve(projectPath);
   const rootStat = await stat(root).catch(() => undefined);
   if (!rootStat?.isDirectory()) throw new Error(`Project directory does not exist: ${root}`);
+  const revisionPromise = readRepositoryRevision(root);
 
   const files = await discoverProject(root, options);
+  const automationPromise = inspectRecordAutomation(root, files.metadata);
   const apexFiles = await mapLimit(files.apex, 8, (absolutePath) =>
     extractApexFile(absolutePath, relativePath(root, absolutePath)),
   );
@@ -75,7 +81,24 @@ export async function analyzeProject(projectPath: string, options: AnalysisOptio
       .filter((candidate) => candidate.kind === "class" || candidate.kind === "interface" || candidate.kind === "enum")
       .reduce((total, candidate) => total + candidate.sourceBytes, 0),
   };
-  const executive = buildExecutiveSummary(apexFiles, symbols, graph.candidates, inventory.productionApexCharacters);
+  const duplicates = analyzeDuplicates(apexFiles, inventory.productionApexCharacters, graph.reachability);
+  const flowMigration = analyzeFlowMigration(
+    apexFiles,
+    symbols,
+    graph.references,
+    graph.entryPoints,
+    inventory.productionApexCharacters,
+    await automationPromise,
+    graph.blockers,
+  );
+  const executive = buildExecutiveSummary(
+    apexFiles,
+    symbols,
+    graph.candidates,
+    inventory.productionApexCharacters,
+    duplicates,
+    flowMigration,
+  );
   const reportReferences = options.fullGraph
     ? graph.references
     : selectReferenceEvidence(graph.references, graph.reachability, graph.evidencePaths, new Set(graph.candidates.map((candidate) => candidate.symbolId)));
@@ -87,6 +110,9 @@ export async function analyzeProject(projectPath: string, options: AnalysisOptio
     inventory,
     summary,
     executive,
+    revision: await revisionPromise,
+    duplicates,
+    flowMigration,
     analysis: {
       universe: "repository",
       assumption: "All deployable Apex and metadata that define production calls are present in the analyzed SFDX package directories; callers outside the repository are outside this result.",
@@ -109,6 +135,8 @@ function buildExecutiveSummary(
   symbols: ApexSymbol[],
   candidates: AnalysisReport["candidates"],
   productionCharacters: number,
+  duplicates: AnalysisReport["duplicates"],
+  flowMigration: AnalysisReport["flowMigration"],
 ): AnalysisReport["executive"] {
   const byId = new Map(symbols.map((symbol) => [symbol.id, symbol]));
   const candidateTypeIds = new Set(
@@ -145,8 +173,19 @@ function buildExecutiveSummary(
     topLevelCandidateFiles: candidateFiles.size,
     internalRefactorCandidates: internalCandidates.length,
     redundancy: {
-      status: "not-measured",
-      reason: "Token-based duplication analysis is not implemented in this version; no redundancy percentage was inferred.",
+      status: "measured",
+      coveredCharacters: duplicates.cloneCoverageCharacters,
+      coveredPercent: duplicates.cloneCoverageCharacterPercent,
+      duplicatedCharacters: duplicates.duplicatedCharacters,
+      duplicatedPercent: duplicates.duplicatedCharacterPercent,
+      cloneGroups: duplicates.cloneGroups.length,
+      queryFamilies: duplicates.queryFamilies.length,
+      reason: "Clone coverage and repeated-occurrence coverage use unique, non-test source intervals from accepted exact, parameterized, and verified near-miss profiles. Query and DML families remain separate, and no clone percentage is labeled guaranteed Apex savings.",
+    },
+    flowAutomation: {
+      eligibleTriggers: flowMigration.eligibleTriggers,
+      reclaimableCharacters: flowMigration.reclaimableCharacters,
+      reclaimablePercent: flowMigration.reclaimablePercent,
     },
   };
 }

@@ -13,6 +13,7 @@ describe("analyzeProject", () => {
     expect(report.reachability[byName.get("AccountTrigger")!.id]).toBe("production");
     expect(report.reachability[byName.get("AccountHandler.run(List<Account>)")!.id]).toBe("production");
     expect(report.reachability[byName.get("AccountHandler.helper(Integer)")!.id]).toBe("production");
+    expect(report.reachability[byName.get("AccountHandler.dispatch(Integer)")!.id]).toBe("production");
     expect(report.reachability[byName.get("AccountHandler.orphan()")!.id]).toBe("unreachable");
     expect(report.reachability[byName.get("Legacy.onlyTestsCallThis()")!.id]).toBe("test-only");
     expect(report.candidates.some((candidate) => candidate.qualifiedName.startsWith("Legacy"))).toBe(false);
@@ -100,14 +101,16 @@ describe("analyzeProject", () => {
     expect(report.candidates.every((candidate) => !candidate.qualifiedName.startsWith("LegacyTest"))).toBe(true);
 
     const markdown = renderMarkdown(report);
-    expect(markdown).toContain("# Apex recovery analysis");
+    expect(markdown).toContain("# Apex capacity recovery analysis");
     expect(markdown).toContain("## Leadership view");
-    expect(markdown).toContain("Repository-unreachable code");
+    expect(markdown).toContain("Safe deprecation");
     expect(report.executive.deprecationCandidatePercent).toBeGreaterThan(0);
     expect(report.executive.retainedPercent + report.executive.deprecationCandidatePercent).toBe(100);
-    expect(report.executive.redundancy.status).toBe("not-measured");
+    expect(report.executive.redundancy.status).toBe("measured");
     expect(markdown).toContain("UnusedPrivate");
-    expect(markdown).toContain("closed-world repository result");
+    expect(markdown).toContain("Deterministic closed-world result");
+    expect(markdown).toContain("Duplicate clone families");
+    expect(markdown).toContain("Trigger-to-Flow conversion");
     expect(markdown).not.toMatch(/\b(high|medium|low)[ -]confidence\b/i);
   });
 });
