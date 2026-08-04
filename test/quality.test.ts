@@ -1,6 +1,7 @@
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { analyzeProject } from "../src/analyze.js";
+import { renderMarkdown } from "../src/report.js";
 
 const fixture = path.resolve("fixtures/quality");
 
@@ -42,6 +43,15 @@ describe("quality recovery analysis", () => {
     expect(accountFamily?.occurrences.every((item) => item.securityMode === "unspecified")).toBe(true);
     expect(report.duplicates.queryCoverage.status).toBe("blocked");
     expect(report.duplicates.queryCoverage.unresolvedDynamicQueries.some((gap) => gap.symbolId.includes("dynamicqueries.unknown"))).toBe(true);
+    expect(report.duplicates.queryCoverage.unresolvedDynamicQueries.some((gap) => gap.symbolId.includes("knownthroughconstants"))).toBe(false);
+    expect(report.duplicates.queryFamilies.some((family) => family.object.toLowerCase() === "case"
+      && family.kind === "exact-query"
+      && family.occurrences.some((query) => query.symbolId.includes("knownthroughconstants")))).toBe(true);
+
+    const markdown = renderMarkdown(report);
+    expect(markdown).toContain("dynamic SOQL site(s) excluded");
+    expect(markdown).not.toContain("SOQL coverage is **blocked**");
+    expect(markdown).not.toContain("Dynamic SOQL coverage blockers");
   });
 
   it("classifies simple trigger paths separately from unsupported callouts", async () => {

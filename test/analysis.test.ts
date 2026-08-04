@@ -103,7 +103,9 @@ describe("analyzeProject", () => {
     const markdown = renderMarkdown(report);
     expect(markdown).toContain("# Apex capacity recovery analysis");
     expect(markdown).toContain("## Leadership view");
-    expect(markdown).toContain("Safe deprecation");
+    expect(markdown).toContain("Deprecation candidates - not certified");
+    expect(markdown).toContain("## Why certification is blocked");
+    expect(markdown).not.toContain("Safe deprecation");
     expect(report.executive.deprecationCandidatePercent).toBeGreaterThan(0);
     expect(report.executive.retainedPercent + report.executive.deprecationCandidatePercent).toBe(100);
     expect(report.executive.redundancy.status).toBe("measured");

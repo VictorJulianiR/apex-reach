@@ -15,16 +15,18 @@ It does **not** send source code to an LLM or require access to a Salesforce org
 - method candidates inside live classes for refactoring;
 - machine-readable JSON plus a review-oriented Markdown report;
 - exact, parameterized, and verified near-miss clone families with non-overlapping source coverage;
-- static and constant-folded dynamic SOQL families, with unresolved dynamic queries reported as coverage blockers;
+- static and constant-folded dynamic SOQL families, with runtime-dependent query sites explicitly excluded from family totals;
 - compatible DML/domain-operation families that preserve transaction and access-mode differences;
 - binary trigger-to-Flow eligibility with explicit order, bulk, transaction, recursion, security, callout, async, and coverage blockers;
 - analyzed Git branch, commit, and dirty state in every report.
 
-The executive report keeps three lanes separate: **safe deprecation**, **duplicate/refactor coverage**, and **Apex proven removable by Flow conversion**. They are not added together because source intervals can overlap, and duplicate coverage is not guaranteed savings after abstraction overhead.
+The executive report keeps three lanes separate: **certified repository-unreachable Apex**, **duplicate/refactor coverage**, and **Apex proven removable by Flow conversion**. They are not added together because source intervals can overlap, and duplicate coverage is not guaranteed savings after abstraction overhead.
 
 The primary result is a deterministic **closed-world repository classification**. It assumes every deployable Apex file and every metadata/configuration file that defines production calls is present in the SFDX package directories. Within that declared universe a symbol is either production-reachable, test-only, or unreachable; the tool does not assign probability. Callers outside the repository, such as an external REST client, are outside the result by definition and are listed as exposure signals instead of changing reachability.
 
-If parsing, dynamic type construction, duplicate symbols, or unresolved calls prevent a complete conclusion, the report status is `blocked` and lists every blocker at its exact file and line. A blocker is never converted into a confidence score. Clone similarity is a reproducible threshold measurement, not probability.
+If parsing, dynamic type construction, duplicate symbols, or unresolved calls prevent a complete reachability conclusion, the report labels deprecation candidates **not certified**, groups every blocker by concrete cause, and lists its exact file and line. Nothing is called safe while certification is blocked. Dynamic SOQL exclusions do not invalidate resolved query-family findings: the Markdown reports resolved families and excluded call sites separately. A blocker is never converted into a confidence score. Clone similarity is a reproducible threshold measurement, not probability.
+
+The Markdown report is intentionally operational: it shows at most 25 findings per large analysis table and keeps the complete evidence set in JSON.
 
 ## Install on Windows (no admin required)
 

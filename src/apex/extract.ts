@@ -104,6 +104,7 @@ interface ModifierContainer extends ContextLike {
 interface Scope {
   symbol: ApexSymbol;
   variables: Map<string, string>;
+  strings: Map<string, string>;
 }
 
 class DiagnosticListener extends ApexErrorListener {
@@ -170,7 +171,7 @@ class ExtractionListener extends ApexParserBaseListener {
     const name = ctx.id(0).getText();
     const symbol = this.makeTypeSymbol("trigger", name, ctx, [], []);
     this.symbols.push(symbol);
-    const scope = { symbol, variables: new Map<string, string>() };
+    const scope = { symbol, variables: new Map<string, string>(), strings: new Map<string, string>() };
     this.typeStack.push(scope);
     this.executableStack.push(scope);
     this.behaviorStack.push(newBehavior(symbol.id));
@@ -189,7 +190,7 @@ class ExtractionListener extends ApexParserBaseListener {
     const interfaces = ctx.typeList()?.typeRef_list().map((type) => type.getText()) ?? [];
     const symbol = this.makeTypeSymbol("class", ctx.id().getText(), ctx, modifiers, interfaces, ctx.typeRef()?.getText());
     this.symbols.push(symbol);
-    this.typeStack.push({ symbol, variables: new Map<string, string>() });
+    this.typeStack.push({ symbol, variables: new Map<string, string>(), strings: new Map<string, string>() });
     if (annotations.includes("restresource")) {
       this.addExposure(symbol, "annotation", "@RestResource class can be called outside the repository");
     }
@@ -205,7 +206,7 @@ class ExtractionListener extends ApexParserBaseListener {
     const interfaces = ctx.typeList()?.typeRef_list().map((type) => type.getText()) ?? [];
     const symbol = this.makeTypeSymbol("interface", ctx.id().getText(), ctx, modifiers, interfaces);
     this.symbols.push(symbol);
-    this.typeStack.push({ symbol, variables: new Map<string, string>() });
+    this.typeStack.push({ symbol, variables: new Map<string, string>(), strings: new Map<string, string>() });
     this.addVisibilityExposure(symbol);
   }
 
@@ -216,7 +217,7 @@ class ExtractionListener extends ApexParserBaseListener {
   enterEnumDeclaration(ctx: EnumDeclarationContext): void {
     const symbol = this.makeTypeSymbol("enum", ctx.id().getText(), ctx, modifiersOf(ctx), []);
     this.symbols.push(symbol);
-    this.typeStack.push({ symbol, variables: new Map<string, string>() });
+    this.typeStack.push({ symbol, variables: new Map<string, string>(), strings: new Map<string, string>() });
     this.addVisibilityExposure(symbol);
   }
 
@@ -231,7 +232,7 @@ class ExtractionListener extends ApexParserBaseListener {
     const parameterTypes = parameterTypesOf(ctx.formalParameters());
     const symbol = this.makeMemberSymbol("method", owner.symbol, ctx.id().getText(), parameterTypes, ctx, modifiers, parameterNamesOf(ctx.formalParameters()));
     this.symbols.push(symbol);
-    this.executableStack.push({ symbol, variables: new Map<string, string>() });
+    this.executableStack.push({ symbol, variables: new Map<string, string>(), strings: new Map<string, string>() });
     this.behaviorStack.push(newBehavior(symbol.id));
     this.classifyMethodEntry(symbol, owner.symbol);
     this.addVisibilityExposure(symbol);
@@ -258,7 +259,7 @@ class ExtractionListener extends ApexParserBaseListener {
     const parameterTypes = parameterTypesOf(ctx.formalParameters());
     const symbol = this.makeMemberSymbol("constructor", owner.symbol, owner.symbol.name, parameterTypes, ctx, modifiersOf(ctx), parameterNamesOf(ctx.formalParameters()));
     this.symbols.push(symbol);
-    this.executableStack.push({ symbol, variables: new Map<string, string>() });
+    this.executableStack.push({ symbol, variables: new Map<string, string>(), strings: new Map<string, string>() });
     this.behaviorStack.push(newBehavior(symbol.id));
     this.addVisibilityExposure(symbol);
   }
@@ -273,7 +274,12 @@ class ExtractionListener extends ApexParserBaseListener {
     if (!scope) return;
     const type = ctx.typeRef().getText();
     for (const variable of ctx.variableDeclarators().variableDeclarator_list()) {
-      scope.variables.set(normalizeName(variable.id().getText()), type);
+      const name = normalizeName(variable.id().getText());
+      scope.variables.set(name, type);
+      if (normalizeName(type) === "string" && isFinalField(ctx) && variable.ASSIGN()) {
+        const value = foldApexString(variable.expression().getText(), (identifier) => this.resolveStringValue(identifier));
+        if (value !== undefined) scope.strings.set(name, value);
+      }
     }
   }
 
@@ -289,7 +295,12 @@ class ExtractionListener extends ApexParserBaseListener {
     const type = ctx.typeRef().getText();
     this.recordAdvancedCollection(type);
     for (const variable of ctx.variableDeclarators().variableDeclarator_list()) {
-      scope.variables.set(normalizeName(variable.id().getText()), type);
+      const name = normalizeName(variable.id().getText());
+      scope.variables.set(name, type);
+      if (normalizeName(type) === "string" && variable.ASSIGN()) {
+        const value = foldApexString(variable.expression().getText(), (identifier) => this.resolveStringValue(identifier));
+        if (value !== undefined) scope.strings.set(name, value);
+      }
     }
   }
 
@@ -345,6 +356,7 @@ class ExtractionListener extends ApexParserBaseListener {
     if (assignment?.[1]) {
       behavior.assignments += 1;
       behavior.assignmentTargets.push(assignment[1]);
+      this.invalidateAssignedString(assignment[1]);
     }
   }
 
@@ -450,7 +462,8 @@ class ExtractionListener extends ApexParserBaseListener {
 
     if (normalizeName(simpleTypeName(receiverType)) === "type" && normalizeName(name) === "forname") {
       const argument = ctx.expressionList()?.getText() ?? "";
-      const literal = /^['\"]([A-Za-z_][\w.]*)['\"]$/.exec(argument)?.[1];
+      const foldedTypeName = foldApexString(argument, (identifier) => this.resolveStringValue(identifier));
+      const literal = foldedTypeName && /^[A-Za-z_][\w.]*$/.test(foldedTypeName) ? foldedTypeName : undefined;
       if (literal) {
         this.references.push({
           sourceId: this.currentSourceId(),
@@ -465,7 +478,7 @@ class ExtractionListener extends ApexParserBaseListener {
         this.blockers.push({
           code: "dynamic-type",
           scope: "reference",
-          message: "A computed Type.forName value can reference a class that has no lexical caller.",
+          message: `Type.forName(${argument}) depends on a runtime value and can reference a class that has no lexical caller.`,
           blocksClosedWorldConclusion: true,
           ...(sourceId ? { symbolId: sourceId } : {}),
           location: this.location(ctx),
@@ -651,7 +664,7 @@ class ExtractionListener extends ApexParserBaseListener {
     const behavior = this.currentBehavior();
     const symbolId = this.currentSourceId();
     if (!behavior || !symbolId) return;
-    const folded = foldApexString(expression);
+    const folded = foldApexString(expression, (identifier) => this.resolveStringValue(identifier));
     const parsed = folded ? parseDynamicSoql(folded) : undefined;
     if (!parsed) {
       behavior.dynamicQueryGaps.push({
@@ -699,6 +712,24 @@ class ExtractionListener extends ApexParserBaseListener {
     const normalized = normalizeName(receiver.replace(/^(this|super)\./i, ""));
     const simple = normalized.split(".").at(-1) ?? normalized;
     return this.currentExecutable()?.variables.get(simple) ?? this.currentType()?.variables.get(simple);
+  }
+
+  private resolveStringValue(identifier: string): string | undefined {
+    const normalized = normalizeName(identifier.replace(/^(?:this|super)\./i, ""));
+    const simple = normalized.split(".").at(-1) ?? normalized;
+    return this.currentExecutable()?.strings.get(normalized)
+      ?? this.currentExecutable()?.strings.get(simple)
+      ?? this.currentType()?.strings.get(normalized)
+      ?? this.currentType()?.strings.get(simple);
+  }
+
+  private invalidateAssignedString(target: string): void {
+    const normalized = normalizeName(target.replace(/^(?:this|super)\./i, ""));
+    const simple = normalized.split(".").at(-1) ?? normalized;
+    this.currentExecutable()?.strings.delete(normalized);
+    this.currentExecutable()?.strings.delete(simple);
+    this.currentType()?.strings.delete(normalized);
+    this.currentType()?.strings.delete(simple);
   }
 
   private currentType(): Scope | undefined {
@@ -805,10 +836,78 @@ function newBehavior(symbolId: string): ExecutableBehavior {
   };
 }
 
-function foldApexString(expression: string): string | undefined {
-  const pieces = expression.replace(/^\((.*)\)$/s, "$1").split("+").map((piece) => piece.trim());
-  if (pieces.length === 0 || pieces.some((piece) => !/^'(?:\\.|[^'])*'$/.test(piece))) return undefined;
-  return pieces.map((piece) => piece.slice(1, -1).replace(/\\'/g, "'").replace(/\\\\/g, "\\")).join("");
+function foldApexString(expression: string, resolveIdentifier: (identifier: string) => string | undefined = () => undefined): string | undefined {
+  const unwrapped = unwrapParentheses(expression.trim());
+  const pieces = splitStringConcatenation(unwrapped);
+  if (pieces.length === 0) return undefined;
+  const values: string[] = [];
+  for (const rawPiece of pieces) {
+    const piece = unwrapParentheses(rawPiece.trim());
+    const literal = /^'(?:\\.|[^'])*'$/.test(piece)
+      ? piece.slice(1, -1).replace(/\\'/g, "'").replace(/\\\\/g, "\\")
+      : undefined;
+    if (literal !== undefined) {
+      values.push(literal);
+      continue;
+    }
+    if (/^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$/.test(piece)) {
+      const resolved = resolveIdentifier(piece);
+      if (resolved === undefined) return undefined;
+      values.push(resolved);
+      continue;
+    }
+    return undefined;
+  }
+  return values.join("");
+}
+
+function splitStringConcatenation(expression: string): string[] {
+  const pieces: string[] = [];
+  let quoted = false;
+  let depth = 0;
+  let start = 0;
+  for (let index = 0; index < expression.length; index += 1) {
+    const char = expression[index];
+    if (char === "'" && expression[index - 1] !== "\\") quoted = !quoted;
+    if (quoted) continue;
+    if (char === "(") depth += 1;
+    else if (char === ")") depth -= 1;
+    else if (char === "+" && depth === 0) {
+      pieces.push(expression.slice(start, index));
+      start = index + 1;
+    }
+  }
+  pieces.push(expression.slice(start));
+  return pieces;
+}
+
+function unwrapParentheses(expression: string): string {
+  let result = expression;
+  while (result.startsWith("(") && result.endsWith(")") && enclosesWholeExpression(result)) {
+    result = result.slice(1, -1).trim();
+  }
+  return result;
+}
+
+function enclosesWholeExpression(expression: string): boolean {
+  let quoted = false;
+  let depth = 0;
+  for (let index = 0; index < expression.length; index += 1) {
+    const char = expression[index];
+    if (char === "'" && expression[index - 1] !== "\\") quoted = !quoted;
+    if (quoted) continue;
+    if (char === "(") depth += 1;
+    else if (char === ")") {
+      depth -= 1;
+      if (depth === 0 && index < expression.length - 1) return false;
+    }
+  }
+  return depth === 0;
+}
+
+function isFinalField(ctx: FieldDeclarationContext): boolean {
+  const declaration = ctx.parentCtx?.parentCtx as ContextLike & { modifier_list?: () => Array<{ getText(): string }> };
+  return declaration.modifier_list?.().some((modifier) => normalizeName(modifier.getText()) === "final") ?? false;
 }
 
 function parseDynamicSoql(query: string): Omit<SoqlObservation, "symbolId" | "dynamic" | "location" | "securityMode" | "sharingContext" | "aggregate" | "locking"> | undefined {

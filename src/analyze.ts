@@ -19,7 +19,7 @@ import {
 } from "./model.js";
 import { relativePath } from "./paths.js";
 
-const TOOL_VERSION = "0.3.0";
+const TOOL_VERSION = "0.3.1";
 
 /**
  * Stable external seam for the analyzer. It performs no writes and requires no Salesforce org.

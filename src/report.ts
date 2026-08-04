@@ -1,8 +1,14 @@
 import type { AnalysisReport, RecoveryCandidate } from "./model.js";
 
+const MARKDOWN_FINDING_LIMIT = 25;
+
 export function renderMarkdown(report: AnalysisReport): string {
   const classes = report.candidates.filter(isTypeCandidate);
   const members = report.candidates.filter((candidate) => !isTypeCandidate(candidate));
+  const blockingCount = report.analysis.blockers.filter((item) => item.blocksClosedWorldConclusion).length;
+  const exactQueryFamilies = report.duplicates.queryFamilies.filter((family) => family.kind === "exact-query").length;
+  const selectorFamilies = report.duplicates.queryFamilies.length - exactQueryFamilies;
+  const excludedRuntimeQueries = report.duplicates.queryCoverage.unresolvedDynamicQueries.length;
   const revision = report.revision.available
     ? `${report.revision.branch ?? "detached"} @ ${(report.revision.commit ?? "unknown").slice(0, 12)}${report.revision.dirty ? " (dirty working tree)" : ""}`
     : "Git revision unavailable";
@@ -12,12 +18,15 @@ export function renderMarkdown(report: AnalysisReport): string {
     `Analyzed revision: **${revision}**.`, "",
     "> Deterministic closed-world result: all deployable Apex and calling metadata are assumed to be present in the analyzed SFDX package directories.", "",
     "## Leadership view", "",
-    `- **Safe deprecation:** **${formatPercent(report.executive.deprecationCandidatePercent)}** of production Apex is repository-unreachable (${formatNumber(report.executive.deprecationCandidateCharacters)} raw characters).`,
+    report.analysis.status === "complete"
+      ? `- **Certified repository-unreachable Apex:** **${formatPercent(report.executive.deprecationCandidatePercent)}** of production Apex (${formatNumber(report.executive.deprecationCandidateCharacters)} raw characters).`
+      : `- **Deprecation candidates - not certified:** **${formatPercent(report.executive.deprecationCandidatePercent)}** of production Apex (${formatNumber(report.executive.deprecationCandidateCharacters)} raw characters). Do not delete until the ${formatNumber(blockingCount)} reachability blocker(s) below are resolved.`,
     `- **Duplicate/refactor coverage:** **${formatPercent(report.executive.redundancy.coveredPercent)}** participates in an accepted clone family; **${formatPercent(report.executive.redundancy.duplicatedPercent)}** is repeated occurrence coverage after retaining one representative per family. Coverage is **${report.duplicates.coverage.status}**.`,
-    `- **Selectors and domain operations:** ${formatNumber(report.duplicates.queryFamilies.length)} SOQL family finding(s) and ${formatNumber(report.duplicates.dmlFamilies.length)} compatible repeated DML family finding(s). SOQL coverage is **${report.duplicates.queryCoverage.status}**.`,
+    `- **SOQL and domain operations:** ${formatNumber(exactQueryFamilies)} exact-query family finding(s), ${formatNumber(selectorFamilies)} selector-shape family finding(s), ${formatNumber(excludedRuntimeQueries)} dynamic SOQL site(s) excluded from those totals, and ${formatNumber(report.duplicates.dmlFamilies.length)} compatible repeated DML family finding(s).`,
     `- **Flow conversion:** ${formatNumber(report.flowMigration.eligibleTriggers)} eligible, ${formatNumber(report.flowMigration.ineligibleTriggers)} ineligible, ${formatNumber(report.flowMigration.blockedTriggers)} blocked; proven shrinkable/removable Apex is **${formatPercent(report.flowMigration.reclaimablePercent)}** (${formatNumber(report.flowMigration.reclaimableCharacters)} raw characters).`,
-    `- **Reachability coverage:** **${report.analysis.status}**${report.analysis.status === "blocked" ? ` (${report.analysis.blockers.filter((item) => item.blocksClosedWorldConclusion).length} exact blockers)` : ""}.`, "",
+    `- **Reachability certification:** **${report.analysis.status}**${report.analysis.status === "blocked" ? ` (${formatNumber(blockingCount)} exact code location(s))` : ""}.`, "",
     "Do not add these percentages: source intervals can overlap, and clone coverage is a refactoring measure rather than guaranteed capacity recovery. States are binary or blocked; clone similarity is a measured threshold, not confidence.", "",
+    ...(report.analysis.status === "blocked" ? ["## Why certification is blocked", "", ...renderBlockerSummary(report), ""] : []),
     "## Inventory", "",
     `- ${formatNumber(report.inventory.apexFiles)} Apex files; ${formatNumber(report.inventory.productionApexCharacters)} production and ${formatNumber(report.inventory.testApexCharacters)} test characters.`,
     `- ${formatNumber(report.summary.productionReachable)} production-reachable, ${formatNumber(report.summary.testOnlyReachable)} test-only, and ${formatNumber(report.summary.unreachable)} unreachable symbols.`,
@@ -29,25 +38,27 @@ export function renderMarkdown(report: AnalysisReport): string {
     "## Repeated DML/domain operations", "", ...renderDmlFamilies(report), "",
     "## Trigger-to-Flow conversion", "", ...renderFlowAssessments(report), "",
     "## Top-level deprecation candidates", "", ...renderCandidateTable(classes), "",
-    "## Method and constructor candidates", "", ...renderCandidateTable(members, 100), "",
-    "## Analysis blockers", "", ...renderBlockers(report), "",
+    "## Method and constructor candidates", "", ...renderCandidateTable(members), "",
+    "## Analysis blocker details", "", ...renderBlockers(report), "",
     "## Review order", "",
-    "1. Resolve coverage blockers and confirm the revision printed at the top.",
-    "2. Remove the largest repository-unreachable artifacts in tested batches.",
+    report.analysis.status === "blocked"
+      ? "1. Resolve every reachability blocker shown above; do not delete deprecation candidates before certification is complete."
+      : "1. Confirm the revision printed at the top and remove the largest certified repository-unreachable artifacts in tested batches.",
+    "2. Re-run reachability and the Salesforce test suite after each deletion batch.",
     "3. Consolidate clone, selector, and DML families; measure the resulting source after refactoring.",
     "4. Convert only Flow paths marked eligible; every other path carries an exact reason.",
-    "5. Re-run this analyzer and the Salesforce test suite after each batch.", "",
+    "5. Use the JSON report for the complete evidence set; Markdown intentionally shows only the largest operational findings.", "",
   ].join("\n");
 }
 
 function renderCloneGroups(report: AnalysisReport): string[] {
   if (report.duplicates.cloneGroups.length === 0) return ["No accepted clone families were found."];
   const rows = ["| Family | Profile | Similarity | Repeated chars | Difference evidence | Locations |", "|---|---|---:|---:|---|---|"];
-  for (const group of report.duplicates.cloneGroups.slice(0, 200)) {
+  for (const group of report.duplicates.cloneGroups.slice(0, MARKDOWN_FINDING_LIMIT)) {
     const evidence = group.occurrences.map((item) => `\`${item.path}:${item.startLine}-${item.endLine}\``).join("<br>");
     rows.push(`| \`${group.id}\` | ${group.profile} | ${(group.similarity * 100).toFixed(1)}% | ${formatNumber(group.duplicatedCharacters)} | ${escapeCell(group.differences.join(" ") || "None")} | ${evidence} |`);
   }
-  if (report.duplicates.cloneGroups.length > 200) rows.push(`\n_${formatNumber(report.duplicates.cloneGroups.length - 200)} additional families are retained in JSON._`);
+  if (report.duplicates.cloneGroups.length > MARKDOWN_FINDING_LIMIT) rows.push(`\n_${formatNumber(report.duplicates.cloneGroups.length - MARKDOWN_FINDING_LIMIT)} additional families are retained in JSON._`);
   return rows;
 }
 
@@ -56,14 +67,24 @@ function renderQueryFamilies(report: AnalysisReport): string[] {
   if (report.duplicates.queryFamilies.length === 0) rows.push("No compatible SOQL families were found.");
   else {
     rows.push("| Family | Object | Kind | Common / union fields | Evidence |", "|---|---|---|---:|---|");
-    for (const family of report.duplicates.queryFamilies.slice(0, 200)) {
+    for (const family of report.duplicates.queryFamilies.slice(0, MARKDOWN_FINDING_LIMIT)) {
       const evidence = family.occurrences.map((item) => `\`${item.location.path}:${item.location.line}\``).join("<br>");
       rows.push(`| \`${family.id}\` | ${family.object} | ${family.kind} | ${family.commonFields.length} / ${family.unionFields.length} | ${evidence} |`);
     }
   }
+  if (report.duplicates.queryFamilies.length > MARKDOWN_FINDING_LIMIT) rows.push(`\n_${formatNumber(report.duplicates.queryFamilies.length - MARKDOWN_FINDING_LIMIT)} additional SOQL families are retained in JSON._`);
   if (report.duplicates.queryCoverage.unresolvedDynamicQueries.length > 0) {
-    rows.push("", "### Dynamic SOQL coverage blockers", "", "| Location | Expression | Reason |", "|---|---|---|");
-    for (const gap of report.duplicates.queryCoverage.unresolvedDynamicQueries) rows.push(`| \`${gap.location.path}:${gap.location.line}\` | \`${escapeCell(gap.expression)}\` | ${escapeCell(gap.reason)} |`);
+    rows.push(
+      "",
+      "### Dynamic SOQL sites excluded from family totals",
+      "",
+      "These are deterministic call sites, not uncertain findings. Each site is excluded either because its final query text depends on a runtime value or because its constant text is outside the supported `SELECT ... FROM ... WHERE ...` grammar. The exact reason is shown below.",
+      "",
+      "| Location | Query-building expression | Why excluded |",
+      "|---|---|---|",
+    );
+    for (const gap of report.duplicates.queryCoverage.unresolvedDynamicQueries.slice(0, MARKDOWN_FINDING_LIMIT)) rows.push(`| \`${gap.location.path}:${gap.location.line}\` | \`${escapeCell(gap.expression)}\` | ${escapeCell(gap.reason)} |`);
+    if (report.duplicates.queryCoverage.unresolvedDynamicQueries.length > MARKDOWN_FINDING_LIMIT) rows.push(`\n_${formatNumber(report.duplicates.queryCoverage.unresolvedDynamicQueries.length - MARKDOWN_FINDING_LIMIT)} additional dynamic SOQL sites are retained in JSON._`);
   }
   return rows;
 }
@@ -71,10 +92,11 @@ function renderQueryFamilies(report: AnalysisReport): string[] {
 function renderDmlFamilies(report: AnalysisReport): string[] {
   if (report.duplicates.dmlFamilies.length === 0) return ["No compatible repeated DML families were found."];
   const rows = ["| Family | Operation | Target | Evidence |", "|---|---|---|---|"];
-  for (const family of report.duplicates.dmlFamilies.slice(0, 200)) {
+  for (const family of report.duplicates.dmlFamilies.slice(0, MARKDOWN_FINDING_LIMIT)) {
     const evidence = family.occurrences.map((item) => `\`${item.location.path}:${item.location.line}\` (${item.allOrNone}, ${item.accessMode})`).join("<br>");
     rows.push(`| \`${family.id}\` | ${family.operation} | ${family.targetType} | ${evidence} |`);
   }
+  if (report.duplicates.dmlFamilies.length > MARKDOWN_FINDING_LIMIT) rows.push(`\n_${formatNumber(report.duplicates.dmlFamilies.length - MARKDOWN_FINDING_LIMIT)} additional DML families are retained in JSON._`);
   return rows;
 }
 
@@ -89,7 +111,7 @@ function renderFlowAssessments(report: AnalysisReport): string[] {
   return rows;
 }
 
-function renderCandidateTable(candidates: RecoveryCandidate[], limit = 50): string[] {
+function renderCandidateTable(candidates: RecoveryCandidate[], limit = MARKDOWN_FINDING_LIMIT): string[] {
   if (candidates.length === 0) return ["No candidates in this category."];
   const rows = [
     "| Classification | Symbol | Kind | Raw chars | Raw size | Location | Exposure flags |",
@@ -108,9 +130,38 @@ function renderBlockers(report: AnalysisReport): string[] {
     "| Blocking | Code | Location | Detail |",
     "|---|---|---|---|",
   ];
-  for (const blocker of report.analysis.blockers) {
+  for (const blocker of report.analysis.blockers.slice(0, MARKDOWN_FINDING_LIMIT)) {
     const location = blocker.location ? `\`${blocker.location.path}:${blocker.location.line}\`` : "Project";
     rows.push(`| ${blocker.blocksClosedWorldConclusion ? "yes" : "no (conservative resolution)"} | \`${blocker.code}\` | ${location} | ${escapeCell(blocker.message)} |`);
+  }
+  if (report.analysis.blockers.length > MARKDOWN_FINDING_LIMIT) rows.push(`\n_${formatNumber(report.analysis.blockers.length - MARKDOWN_FINDING_LIMIT)} additional blocker details are retained in JSON._`);
+  return rows;
+}
+
+function renderBlockerSummary(report: AnalysisReport): string[] {
+  const blocking = report.analysis.blockers.filter((item) => item.blocksClosedWorldConclusion);
+  const descriptions: Record<(typeof blocking)[number]["code"], string> = {
+    "parse-error": "The Apex parser could not read a source construct, so calls inside that file are not certified.",
+    "dynamic-type": "Production code computes a class name for Type.forName(...); the runtime target is not a lexical class reference.",
+    "unresolved-reference": "A repository call could not be bound to its declared target.",
+    "duplicate-symbol": "The same qualified Apex symbol appears more than once in the analyzed package directories.",
+  };
+  const grouped = new Map<string, typeof blocking>();
+  for (const blocker of blocking) {
+    const items = grouped.get(blocker.code);
+    if (items) items.push(blocker);
+    else grouped.set(blocker.code, [blocker]);
+  }
+  const rows = [
+    "Nothing was encrypted or silently skipped. Certification stops only at the concrete source locations below. `blocked` means the analyzer has not earned the right to call the deletion list safe.",
+    "",
+    "| Cause | Count | Exact meaning | Locations |",
+    "|---|---:|---|---|",
+  ];
+  for (const [code, items] of grouped) {
+    const locations = items.slice(0, 5).map((item) => item.location ? `\`${item.location.path}:${item.location.line}\`` : "Project").join("<br>");
+    const remaining = items.length > 5 ? `<br>+ ${formatNumber(items.length - 5)} in JSON` : "";
+    rows.push(`| \`${code}\` | ${formatNumber(items.length)} | ${descriptions[code as keyof typeof descriptions]} | ${locations}${remaining} |`);
   }
   return rows;
 }
