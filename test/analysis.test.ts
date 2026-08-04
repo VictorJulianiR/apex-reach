@@ -33,15 +33,64 @@ describe("analyzeProject", () => {
     expect(report.entryPoints.some((entry) => entry.symbolId === configured.id && entry.reason.includes("Custom Metadata"))).toBe(true);
   });
 
-  it("grades candidates using external and dynamic uncertainty", async () => {
+  it("keeps repository-unreachable candidates deterministic despite exposure and dynamic blockers", async () => {
     const report = await analyzeProject(fixture);
     const privateCandidate = report.candidates.find((candidate) => candidate.qualifiedName === "UnusedPrivate")!;
     const publicCandidate = report.candidates.find((candidate) => candidate.qualifiedName === "UnusedPublic")!;
 
-    expect(privateCandidate.confidence).toBe("medium");
-    expect(privateCandidate.uncertainties).toContain("The project contains a computed Type.forName reference.");
-    expect(publicCandidate.confidence).toBe("low");
-    expect(report.uncertainties.some((uncertainty) => uncertainty.code === "dynamic-type")).toBe(true);
+    expect(privateCandidate.classification).toBe("unreachable-in-repository");
+    expect(publicCandidate.classification).toBe("unreachable-in-repository");
+    expect("confidence" in privateCandidate).toBe(false);
+    expect("confidence" in publicCandidate).toBe(false);
+    expect(report.analysis.blockers.some((blocker) => blocker.code === "dynamic-type")).toBe(true);
+    expect(report.analysis.blockers.some((blocker) => blocker.symbolId?.includes("deaddynamic"))).toBe(false);
+    expect(report.analysis.status).toBe("blocked");
+  });
+
+  it("blocks the conclusion for a computed type lookup on a production path", async () => {
+    const report = await analyzeProject(path.resolve("fixtures/dynamic-live"));
+    const blocker = report.analysis.blockers.find((item) => item.code === "dynamic-type")!;
+
+    expect(report.analysis.status).toBe("blocked");
+    expect(blocker.symbolId).toContain("dynamiclookup.touch");
+    expect(blocker.location?.path).toContain("DynamicLookup.cls");
+  });
+
+  it("does not treat callable annotations as proof of a production call", async () => {
+    const report = await analyzeProject(fixture);
+    const type = report.symbols.find((symbol) => symbol.qualifiedName === "ExposedOnly")!;
+    const auraMethod = report.symbols.find((symbol) => symbol.qualifiedName === "ExposedOnly.auraMethod()")!;
+    const flowMethod = report.symbols.find((symbol) => symbol.qualifiedName.startsWith("ExposedOnly.flowMethod("))!;
+
+    expect(report.reachability[type.id]).toBe("unreachable");
+    expect(report.reachability[auraMethod.id]).toBe("unreachable");
+    expect(report.reachability[flowMethod.id]).toBe("unreachable");
+    expect(report.candidates.some((candidate) => candidate.symbolId === type.id)).toBe(true);
+  });
+
+  it("does not turn a class name inside metadata prose into a production call", async () => {
+    const report = await analyzeProject(fixture);
+    const type = report.symbols.find((symbol) => symbol.qualifiedName === "UnusedPublic")!;
+
+    expect(report.reachability[type.id]).toBe("unreachable");
+  });
+
+  it("resolves Aura bundle controller methods but leaves uncalled methods unreachable", async () => {
+    const report = await analyzeProject(fixture);
+    const invoked = report.symbols.find((symbol) => symbol.qualifiedName === "AuraController.invoked()")!;
+    const orphan = report.symbols.find((symbol) => symbol.qualifiedName === "AuraController.orphan()")!;
+
+    expect(report.reachability[invoked.id]).toBe("production");
+    expect(report.reachability[orphan.id]).toBe("unreachable");
+  });
+
+  it("conservatively follows interface dispatch and constructed platform callbacks", async () => {
+    const report = await analyzeProject(fixture);
+    const implementation = report.symbols.find((symbol) => symbol.qualifiedName === "WorkerImpl.run()")!;
+    const queueExecute = report.symbols.find((symbol) => symbol.qualifiedName.startsWith("QueueJob.execute("))!;
+
+    expect(report.reachability[implementation.id]).toBe("production");
+    expect(report.reachability[queueExecute.id]).toBe("production");
   });
 
   it("excludes test source from the production footprint and renders a useful report", async () => {
@@ -53,11 +102,12 @@ describe("analyzeProject", () => {
     const markdown = renderMarkdown(report);
     expect(markdown).toContain("# Apex recovery analysis");
     expect(markdown).toContain("## Leadership view");
-    expect(markdown).toContain("Deprecation opportunity");
+    expect(markdown).toContain("Repository-unreachable code");
     expect(report.executive.deprecationCandidatePercent).toBeGreaterThan(0);
     expect(report.executive.retainedPercent + report.executive.deprecationCandidatePercent).toBe(100);
     expect(report.executive.redundancy.status).toBe("not-measured");
     expect(markdown).toContain("UnusedPrivate");
-    expect(markdown).toContain("not a safe-to-delete verdict");
+    expect(markdown).toContain("closed-world repository result");
+    expect(markdown).not.toMatch(/\b(high|medium|low)[ -]confidence\b/i);
   });
 });

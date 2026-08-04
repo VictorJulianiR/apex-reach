@@ -6,16 +6,16 @@ import { buildGraph } from "./graph.js";
 import { extractMetadataReferences } from "./metadata.js";
 import {
   REPORT_SCHEMA_VERSION,
+  type AnalysisBlocker,
   type AnalysisOptions,
   type AnalysisReport,
   type ApexSymbol,
   type ExtractedFile,
   type ProjectInventory,
-  type Uncertainty,
 } from "./model.js";
 import { relativePath } from "./paths.js";
 
-const TOOL_VERSION = "0.1.0";
+const TOOL_VERSION = "0.2.0";
 
 /**
  * Stable external seam for the analyzer. It performs no writes and requires no Salesforce org.
@@ -29,33 +29,31 @@ export async function analyzeProject(projectPath: string, options: AnalysisOptio
   const apexFiles = await mapLimit(files.apex, 8, (absolutePath) =>
     extractApexFile(absolutePath, relativePath(root, absolutePath)),
   );
-  const metadataReferences = (await mapLimit(files.metadata, 16, (absolutePath) =>
-    extractMetadataReferences(absolutePath, relativePath(root, absolutePath)),
-  )).flat();
-
   const symbols = apexFiles.flatMap((file) => file.symbols);
+  const metadataReferences = await extractMetadataReferences(
+    files.metadata.map((absolutePath) => ({ absolutePath, reportPath: relativePath(root, absolutePath) })),
+    symbols,
+  );
   const diagnostics = apexFiles.flatMap((file) => file.diagnostics);
-  const uncertainties: Uncertainty[] = [
-    ...apexFiles.flatMap((file) => file.uncertainties),
-    ...diagnostics.map((diagnostic): Uncertainty => ({
+  const blockers: AnalysisBlocker[] = [
+    ...apexFiles.flatMap((file) => file.blockers),
+    ...diagnostics.map((diagnostic): AnalysisBlocker => ({
       code: "parse-error",
       scope: "project",
       message: diagnostic.message,
+      blocksClosedWorldConclusion: true,
       location: { path: diagnostic.path, line: diagnostic.line, column: diagnostic.column },
     })),
-    ...duplicateSymbolUncertainties(symbols),
-    {
-      code: "metadata-gap",
-      scope: "project",
-      message: "The analysis covers repository files only; org-only metadata, queued jobs, configuration data, and external consumers are not observable offline.",
-    },
+    ...duplicateSymbolBlockers(symbols),
   ];
+  const exposures = apexFiles.flatMap((file) => file.exposures);
 
   const graph = buildGraph(
     symbols,
     [...apexFiles.flatMap((file) => file.references), ...metadataReferences],
     apexFiles.flatMap((file) => file.entryPoints),
-    uncertainties,
+    blockers,
+    exposures,
   );
   const inventory = buildInventory(root, files.sourceRoots, apexFiles, files.metadata.length);
   const summary = {
@@ -89,13 +87,19 @@ export async function analyzeProject(projectPath: string, options: AnalysisOptio
     inventory,
     summary,
     executive,
+    analysis: {
+      universe: "repository",
+      assumption: "All deployable Apex and metadata that define production calls are present in the analyzed SFDX package directories; callers outside the repository are outside this result.",
+      status: graph.blockers.some((blocker) => blocker.blocksClosedWorldConclusion) ? "blocked" : "complete",
+      blockers: graph.blockers,
+    },
     symbols: symbols.sort(compareSymbols),
     references: reportReferences.sort(compareLocations),
     entryPoints: graph.entryPoints.sort(compareLocations),
     reachability: graph.reachability,
     evidencePaths: graph.evidencePaths,
     candidates: graph.candidates,
-    uncertainties: graph.uncertainties,
+    exposures: graph.exposures,
     diagnostics,
   };
 }
@@ -217,7 +221,7 @@ async function mapLimit<T, R>(items: T[], limit: number, task: (item: T) => Prom
   return result;
 }
 
-function duplicateSymbolUncertainties(symbols: ApexSymbol[]): Uncertainty[] {
+function duplicateSymbolBlockers(symbols: ApexSymbol[]): AnalysisBlocker[] {
   const grouped = new Map<string, ApexSymbol[]>();
   for (const symbol of symbols) {
     const values = grouped.get(symbol.id);
@@ -230,6 +234,7 @@ function duplicateSymbolUncertainties(symbols: ApexSymbol[]): Uncertainty[] {
       code: "duplicate-symbol" as const,
       scope: "project" as const,
       message: `Duplicate symbol ${values[0]?.qualifiedName ?? "unknown"} appears at ${values.map((value) => `${value.location.path}:${value.location.line}`).join(", ")}.`,
+      blocksClosedWorldConclusion: true,
       ...(values[0] ? { location: values[0].location } : {}),
     }));
 }

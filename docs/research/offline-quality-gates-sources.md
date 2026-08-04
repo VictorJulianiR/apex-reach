@@ -133,7 +133,7 @@ Use these standards to organize report sections and trace rules to quality chara
 
 ## Apex/Salesforce-specific offline layer
 
-Salesforce Code Analyzer is the official first-party umbrella and currently bundles PMD, CPD, ESLint, Flow Scanner, RetireJS, and Salesforce Graph Engine. It supports customized severity/tags and CI output ([Salesforce Code Analyzer overview](https://developer.salesforce.com/docs/platform/salesforce-code-analyzer/guide/code-analyzer.html), [engine list](https://developer.salesforce.com/docs/platform/salesforce-code-analyzer/guide/engines.html)). This makes PMD/CPD compatibility a credible baseline, while the app's differentiator should be unified reachability, capacity recovery, evidence/confidence, Git risk, and report generation.
+Salesforce Code Analyzer is the official first-party umbrella and currently bundles PMD, CPD, ESLint, Flow Scanner, RetireJS, and Salesforce Graph Engine. It supports customized severity/tags and CI output ([Salesforce Code Analyzer overview](https://developer.salesforce.com/docs/platform/salesforce-code-analyzer/guide/code-analyzer.html), [engine list](https://developer.salesforce.com/docs/platform/salesforce-code-analyzer/guide/engines.html)). This makes PMD/CPD compatibility a credible baseline, while the app's differentiator should be unified reachability, capacity recovery, evidence/blockers, Git risk, and report generation.
 
 High-value offline Apex gates include:
 
@@ -156,4 +156,4 @@ Salesforce Graph Engine's rule model is also useful for defining entry points, s
 
 Every finding should include metric definition/version, entity and source span, measured value, policy threshold and origin, contributing evidence, confidence/limitations, and remediation category. That makes the deterministic output strong enough for an LLM to narrate later without asking the LLM to invent the diagnosis.
 
-A practical report can expose three independent lanes: **hard deterministic risks** (parse failures, high-confidence security/governor violations, newly introduced cycles or clones), **maintainability review** (complexity, CK, size, churn, duplication, optional MI), and **capacity recovery** (unreachable symbols × source size × reachability confidence). Maintainability metrics can prioritize review of a reclamation candidate, but cannot prove that it is safe to delete.
+A practical report can expose three independent lanes: **hard deterministic risks** (parse failures, high-confidence security/governor violations, newly introduced cycles or clones), **maintainability review** (complexity, CK, size, churn, duplication, optional MI), and **capacity recovery** (repository-unreachable symbols × source size, gated by explicit analysis blockers). Maintainability metrics can prioritize review of a reclamation candidate, but cannot prove that it is safe to delete outside the declared repository universe.

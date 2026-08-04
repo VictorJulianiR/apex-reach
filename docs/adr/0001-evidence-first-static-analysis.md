@@ -10,13 +10,15 @@ The tool must analyze code that cannot be sent to a hosted model, may contain mi
 
 ## Decision
 
-Build a deterministic local pipeline around an Apex parse tree and a repository-wide symbol/reference graph. Every recovery candidate carries confidence, evidence, and explicit uncertainty. The stable external interface is one analysis operation that accepts a project path and returns a versioned report model; CLI formats are adapters over that model. An LLM may summarize the report but is never part of classification.
+Build a deterministic local pipeline around an Apex parse tree and a repository-wide symbol/reference graph. The report declares a closed-world repository universe: all deployable Apex and calling metadata are assumed present in the SFDX package directories. Every non-test symbol receives exactly one binary reachability classification in that universe. The stable external interface is one analysis operation that accepts a project path and returns a versioned report model; CLI formats are adapters over that model. An LLM may summarize the report but is never part of classification.
 
-Treat annotations, triggers, declared platform interfaces, and supported Salesforce metadata as entry-point evidence. Keep unresolved and dynamic references in the report instead of silently treating them as absent.
+Treat triggers and concrete Apex/metadata references as entry-point evidence. Annotations, visibility, webservices, and declared platform interfaces are exposure signals, not evidence that a call exists. Scan every text metadata file, using format-aware resolution for supported formats and conservative exact-name resolution for the rest. Keep unresolved and dynamic references as explicit analysis blockers with locations instead of turning them into candidate confidence.
 
 ## Consequences
 
 - Analysis is reproducible, reviewable, and safe to run entirely on a client machine.
 - The report remains useful without an LLM and can feed later report-generation layers.
 - Precision improves incrementally by adding resolvers without changing the public analysis interface.
-- A static result is a recovery candidate, not proof that deletion is safe; org-only metadata and external callers require additional evidence.
+- Candidate classification is reproducible and probability-free within the declared repository universe.
+- If a construct prevents a complete conclusion, the whole analysis is visibly blocked until that construct is resolved; unrelated candidates are not downgraded.
+- External callers are explicitly outside the repository result and remain visible as exposure signals.

@@ -1,5 +1,7 @@
 # Pesquisa: análise estática para recuperar capacidade Apex em projetos SFDX
 
+> **Atualização de implementação (v0.2.0):** a decisão final do produto substitui a recomendação inicial de confiança por candidato descrita abaixo. No universo fechado declarado pelo usuário, alcançabilidade é binária (`production`, `test-only`, `unreachable`). Anotações e visibilidade são exposição, não chamadas. Lacunas reais, como `Type.forName` computado em um caminho de produção, bloqueiam a conclusão inteira e apontam arquivo/linha; não viram probabilidade aplicada ao candidato. Consulte o ADR 0001 e `docs/validation.md` para o comportamento validado.
+
 _Levantamento em 3 de agosto de 2026. Fontes priorizadas: documentação e código/repositórios mantidos pela Salesforce, além da documentação primária do PMD quando aplicável._
 
 ## Recomendação executiva

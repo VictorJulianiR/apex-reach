@@ -16,7 +16,7 @@ interface CliOptions {
 const program = new Command()
   .name("apex-reach")
   .description("Evidence-first recovery analysis for Salesforce DX Apex code")
-  .version("0.1.0")
+  .version("0.2.0")
   .argument("[project]", "SFDX project directory", ".")
   .addOption(new Option("-f, --format <format>", "report format").choices(["json", "markdown", "both"]).default("both"))
   .option("-o, --output <base>", "output file base (extensions are added)", "apex-reach-report")

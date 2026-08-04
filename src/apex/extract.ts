@@ -25,13 +25,14 @@ import {
 } from "@apexdevtools/apex-parser";
 import type {
   ApexSymbol,
+  AnalysisBlocker,
   EntryPoint,
+  ExposureSignal,
   ExtractedFile,
   ParseDiagnostic,
   RawReference,
   SourceLocation,
   SymbolKind,
-  Uncertainty,
 } from "../model.js";
 import { normalizeName, simpleTypeName } from "../paths.js";
 
@@ -115,7 +116,8 @@ class ExtractionListener extends ApexParserBaseListener {
   private readonly symbols: ApexSymbol[] = [];
   private readonly references: RawReference[] = [];
   private readonly entryPoints: EntryPoint[] = [];
-  private readonly uncertainties: Uncertainty[] = [];
+  private readonly blockers: AnalysisBlocker[] = [];
+  private readonly exposures: ExposureSignal[] = [];
   private readonly typeStack: Scope[] = [];
   private readonly executableStack: Scope[] = [];
 
@@ -135,7 +137,8 @@ class ExtractionListener extends ApexParserBaseListener {
       symbols: this.symbols,
       references: this.references,
       entryPoints: this.entryPoints,
-      uncertainties: this.uncertainties,
+      blockers: this.blockers,
+      exposures: this.exposures,
       diagnostics: this.diagnostics,
     };
   }
@@ -163,9 +166,9 @@ class ExtractionListener extends ApexParserBaseListener {
     this.symbols.push(symbol);
     this.typeStack.push({ symbol, variables: new Map<string, string>() });
     if (annotations.includes("restresource")) {
-      this.addEntry(symbol, "annotation", "@RestResource class", false);
+      this.addExposure(symbol, "annotation", "@RestResource class can be called outside the repository");
     }
-    this.addExternalUncertainty(symbol);
+    this.addVisibilityExposure(symbol);
   }
 
   exitClassDeclaration(): void {
@@ -178,7 +181,7 @@ class ExtractionListener extends ApexParserBaseListener {
     const symbol = this.makeTypeSymbol("interface", ctx.id().getText(), ctx, modifiers, interfaces);
     this.symbols.push(symbol);
     this.typeStack.push({ symbol, variables: new Map<string, string>() });
-    this.addExternalUncertainty(symbol);
+    this.addVisibilityExposure(symbol);
   }
 
   exitInterfaceDeclaration(): void {
@@ -189,7 +192,7 @@ class ExtractionListener extends ApexParserBaseListener {
     const symbol = this.makeTypeSymbol("enum", ctx.id().getText(), ctx, modifiersOf(ctx), []);
     this.symbols.push(symbol);
     this.typeStack.push({ symbol, variables: new Map<string, string>() });
-    this.addExternalUncertainty(symbol);
+    this.addVisibilityExposure(symbol);
   }
 
   exitEnumDeclaration(): void {
@@ -205,7 +208,7 @@ class ExtractionListener extends ApexParserBaseListener {
     this.symbols.push(symbol);
     this.executableStack.push({ symbol, variables: new Map<string, string>() });
     this.classifyMethodEntry(symbol, owner.symbol);
-    this.addExternalUncertainty(symbol);
+    this.addVisibilityExposure(symbol);
   }
 
   exitMethodDeclaration(): void {
@@ -219,7 +222,7 @@ class ExtractionListener extends ApexParserBaseListener {
     const parameterTypes = parameterTypesOf(ctx.formalParameters());
     const symbol = this.makeMemberSymbol("method", owner.symbol, ctx.id().getText(), parameterTypes, ctx, modifiers);
     this.symbols.push(symbol);
-    this.addExternalUncertainty(symbol);
+    this.addVisibilityExposure(symbol);
   }
 
   enterConstructorDeclaration(ctx: ConstructorDeclarationContext): void {
@@ -229,7 +232,7 @@ class ExtractionListener extends ApexParserBaseListener {
     const symbol = this.makeMemberSymbol("constructor", owner.symbol, owner.symbol.name, parameterTypes, ctx, modifiersOf(ctx));
     this.symbols.push(symbol);
     this.executableStack.push({ symbol, variables: new Map<string, string>() });
-    this.addExternalUncertainty(symbol);
+    this.addVisibilityExposure(symbol);
   }
 
   exitConstructorDeclaration(): void {
@@ -307,10 +310,13 @@ class ExtractionListener extends ApexParserBaseListener {
           detail: `Type.forName literal: ${literal}`,
         });
       } else {
-        this.uncertainties.push({
+        const sourceId = this.currentSourceId();
+        this.blockers.push({
           code: "dynamic-type",
-          scope: "project",
+          scope: "reference",
           message: "A computed Type.forName value can reference a class that has no lexical caller.",
+          blocksClosedWorldConclusion: true,
+          ...(sourceId ? { symbolId: sourceId } : {}),
           location: this.location(ctx),
         });
       }
@@ -428,18 +434,18 @@ class ExtractionListener extends ApexParserBaseListener {
     }
     const entryAnnotation = symbol.annotations.find((annotation) => PLATFORM_METHOD_ANNOTATIONS.has(annotation));
     if (entryAnnotation) {
-      this.addEntry(symbol, "annotation", `@${entryAnnotation} method`, false);
+      this.addExposure(symbol, "annotation", `@${entryAnnotation} method can be invoked by supported platform or metadata callers`);
     }
     if (symbol.modifiers.includes("webservice")) {
-      this.addEntry(symbol, "annotation", "webservice method", false);
+      this.addExposure(symbol, "webservice", "webservice method can be called outside the repository");
     }
     if (symbol.modifiers.includes("global")) {
-      this.addEntry(symbol, "platform", "global method callable outside the repository", false);
+      this.addExposure(symbol, "visibility", "global method can be called outside the repository");
     }
     for (const implemented of owner.interfaces) {
       const callbacks = PLATFORM_CALLBACKS[normalizeName(simpleTypeName(implemented))];
       if (callbacks?.has(normalizeName(symbol.name))) {
-        this.addEntry(symbol, "platform", `${simpleTypeName(implemented)} callback`, false);
+        this.addExposure(symbol, "platform-callback", `${simpleTypeName(implemented)} callback requires a concrete repository caller or metadata binding`);
       }
     }
   }
@@ -448,13 +454,20 @@ class ExtractionListener extends ApexParserBaseListener {
     this.entryPoints.push({ symbolId: symbol.id, source, reason, testOnly, location: symbol.location });
   }
 
-  private addExternalUncertainty(symbol: ApexSymbol): void {
+  private addVisibilityExposure(symbol: ApexSymbol): void {
     if (!symbol.modifiers.some((modifier) => modifier === "public" || modifier === "global" || modifier === "protected")) return;
-    this.uncertainties.push({
-      code: "external-callable",
-      scope: "symbol",
+    this.addExposure(
+      symbol,
+      "visibility",
+      `${symbol.qualifiedName} has ${symbol.modifiers.find((modifier) => modifier === "public" || modifier === "global" || modifier === "protected")} visibility`,
+    );
+  }
+
+  private addExposure(symbol: ApexSymbol, kind: ExposureSignal["kind"], reason: string): void {
+    this.exposures.push({
+      kind,
       symbolId: symbol.id,
-      message: `${symbol.qualifiedName} is externally callable and may be referenced outside the repository.`,
+      reason,
       location: symbol.location,
     });
   }

@@ -1,59 +1,65 @@
 # Validation results
 
-Validation was run on 3 August 2026 with `apex-reach` 0.1.0. Repository clones and generated reports live under the ignored `validation/` directory so they do not become product dependencies.
+Validation was rerun on 4 August 2026 with `apex-reach` 0.2.0. Repository clones and generated reports live under the ignored `validation/` directory so they do not become product dependencies.
 
 ## Automated fixtures
 
-Five integration tests exercise:
+Eleven tests exercise:
 
 - trigger-to-handler and internal method reachability;
 - production, test-only, and unreachable classifications;
-- exact LWC Apex imports;
+- exact LWC imports and Aura bundle `c.method` calls;
 - class references stored in Custom Metadata;
-- computed `Type.forName` risk and confidence reduction;
+- annotation-only methods remaining unreachable without a concrete call;
+- class names embedded in human-readable metadata prose not becoming calls;
+- interface/runtime dispatch and constructed platform callbacks;
+- computed `Type.forName` blocking only when its containing symbol is production-reachable;
+- probability-free candidates and exact blocker locations;
 - exclusion of `@isTest` source from the production footprint;
-- Markdown report generation.
+- Markdown report and Windows installer behavior.
 
-Result: 5/5 passed.
+Result: 11/11 passed, with TypeScript checking and production build also passing.
 
 ## trailheadapps/apex-recipes
 
-- 142 Apex files;
-- 628,433 raw source characters;
-- 905 symbols;
-- 0 parse diagnostics;
-- completed in approximately 1.5 seconds;
-- 1 top-level recovery candidate and 21 member candidates.
+- 142 Apex files and 273 text metadata files;
+- 628,433 raw Apex characters, 312,090 in non-test source;
+- 905 symbols and 2,183 retained reference edges;
+- 0 unresolved local references and 0 parse diagnostics;
+- completed in approximately 2.1 seconds;
+- 1 top-level repository-unreachable type and 21 member candidates;
+- 8,125 repository-unreachable raw production characters (2.60%);
+- 1 blocking, production-reachable computed `Type.forName` site.
 
-The sole top-level candidate was `SchemaRecipes`, which has no code or supported metadata reference in that repository beyond its declaration and generated documentation. This is a plausible review candidate, not ground truth.
+The sole top-level candidate remains `SchemaRecipes`. Visibility is reported as exposure, but no production code or metadata path to the type exists in the repository.
 
 ## SalesforceFoundation/NPSP
 
-- 1,061 Apex files;
-- 14,669,238 raw source characters / 14,669,471 UTF-8 bytes;
-- 14,098 symbols;
-- 141,573 resolved reference edges before report compaction;
-- 0 parse diagnostics;
-- completed in approximately 19.4 seconds;
-- 5 top-level recovery candidates representing 21,699 raw characters;
-- 445 member candidates.
+- 1,061 Apex files and 10,312 text metadata files;
+- 14,669,238 raw Apex characters, 7,014,573 in non-test source;
+- 14,098 symbols and 155,222 retained reference edges;
+- 0 unresolved local references and 0 parse diagnostics;
+- completed in approximately 40.2 seconds;
+- 5 top-level repository-unreachable types and 332 member candidates;
+- 106,994 repository-unreachable raw production characters (1.53%);
+- 19 blocking, production-reachable computed `Type.forName` sites.
 
-The first run exposed two false-positive sources: static field access and Apex implementation names stored in Custom Metadata. Adding those resolvers reduced top-level candidates from 14 to 5. The remaining five are all low-confidence because the repository contains computed dynamic type loading and the types are externally callable. They require manual/org validation.
-
-The standard evidence report stored 20,908 relevant edges and was about 43.9 MB as pretty JSON. `--no-pretty` reduces serialization overhead; `--full-graph` is intentionally opt-in.
+The top-level set is `fflib_RecordTypeId`, `HH_ManageHousehold_EXT`, `RP_HTTPClient`, `ADDR_Validator_REST`, and `fflib_IAppBindingRouter`. Callable annotations and visibility are retained as exposure facts, not converted into probability or automatic production reachability.
 
 ## What this validates
 
-- The parser accepts large, varied, production-grade Apex without syntax loss in the selected corpora.
-- The graph fits comfortably in a local Node process for a ~14.7 MB raw Apex repository.
-- Cross-language and configuration resolvers materially reduce false positives.
-- Confidence and uncertainty are necessary: public repositories do not supply ground truth for dead code, and dynamic/configured entry points remain real.
+- The parser accepts large, varied Apex without syntax loss in the selected corpora.
+- Full text-metadata scanning is practical on a repository with more than ten thousand metadata files.
+- Annotation and visibility exposure can be separated from actual repository calls.
+- Interface dispatch and platform callback propagation materially prevent false deletion candidates.
+- Remaining incompleteness is reduced to a short, deterministic list of reachable computed-dispatch locations rather than candidate-wide confidence scores.
 
 ## What it does not validate
 
-- Precision or recall against a labeled enterprise dataset.
-- Exact Salesforce org code allocation.
-- Org-only metadata, active scheduled jobs, queued work, or external consumers.
+- Precision or recall against a fully labeled enterprise dead-code dataset.
+- Exact Salesforce org code allocation; raw repository characters are used offline.
+- Callers outside the declared repository universe, such as an external REST/SOAP client.
+- Arbitrary computed class-name expressions. Those deliberately block a complete conclusion until each production-reachable expression can be resolved to a finite target set.
 - Eight million lines at once. NPSP is a useful scale signal, not a substitute for a benchmark on the client's hardware and repository shape.
 
-A controlled mutation suite and optional Tooling API enrichment are the next steps for quantitative precision/recall and deployed-org reconciliation.
+The next precision step is interprocedural string/value propagation for the reported dynamic-type sites. Deterministic SOQL-family analysis for selector-layer refactoring remains a separate metric and will not alter the deletion percentage.

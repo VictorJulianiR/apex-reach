@@ -1,12 +1,12 @@
 import type {
+  AnalysisBlocker,
   ApexSymbol,
-  Confidence,
   EntryPoint,
+  ExposureSignal,
   RawReference,
   Reachability,
   RecoveryCandidate,
   ReferenceEdge,
-  Uncertainty,
 } from "./model.js";
 import { normalizeName, simpleTypeName } from "./paths.js";
 
@@ -16,7 +16,8 @@ interface GraphResult {
   reachability: Record<string, Reachability>;
   evidencePaths: Record<string, string[]>;
   candidates: RecoveryCandidate[];
-  uncertainties: Uncertainty[];
+  blockers: AnalysisBlocker[];
+  exposures: ExposureSignal[];
 }
 
 const BUILTIN_RECEIVERS = new Set([
@@ -24,16 +25,27 @@ const BUILTIN_RECEIVERS = new Set([
   "string", "time", "list", "map", "set", "system", "database", "schema", "test", "type", "math", "limits",
 ]);
 
+const PLATFORM_CALLBACKS: Record<string, Set<string>> = {
+  queueable: new Set(["execute"]),
+  schedulable: new Set(["execute"]),
+  batchable: new Set(["start", "execute", "finish"]),
+  callable: new Set(["call"]),
+  inboundemailhandler: new Set(["handleinboundemail"]),
+  installhandler: new Set(["oninstall"]),
+  uninstallhandler: new Set(["onuninstall"]),
+};
+
 export function buildGraph(
   symbols: ApexSymbol[],
   rawReferences: RawReference[],
   declaredEntries: EntryPoint[],
-  initialUncertainties: Uncertainty[],
+  initialBlockers: AnalysisBlocker[],
+  exposures: ExposureSignal[],
 ): GraphResult {
   const index = new SymbolIndex(symbols);
   const references: ReferenceEdge[] = [];
   const entryPoints = [...declaredEntries];
-  const uncertainties = [...initialUncertainties];
+  const blockers = [...initialBlockers];
 
   for (const raw of rawReferences) {
     const targets = resolveReference(raw, index);
@@ -47,10 +59,11 @@ export function buildGraph(
           location: raw.location,
           detail: raw.detail,
         });
-        uncertainties.push({
+        blockers.push({
           code: "unresolved-reference",
           scope: "reference",
           message: `Could not resolve ${raw.detail}.`,
+          blocksClosedWorldConclusion: true,
           ...(raw.sourceId ? { symbolId: raw.sourceId } : {}),
           location: raw.location,
         });
@@ -79,15 +92,6 @@ export function buildGraph(
         });
       }
     }
-    if (targets.length > 1) {
-      uncertainties.push({
-        code: "ambiguous-dispatch",
-        scope: "reference",
-        message: `${raw.detail} conservatively resolves to ${targets.length} symbols.`,
-        ...(raw.sourceId ? { symbolId: raw.sourceId } : {}),
-        location: raw.location,
-      });
-    }
   }
 
   const uniqueEntries = dedupeEntries(entryPoints);
@@ -107,8 +111,13 @@ export function buildGraph(
         ? pathTo(symbol.id, withTests.parent)
         : [];
   }
-  const candidates = buildCandidates(symbols, reachability, uncertainties);
-  return { references, entryPoints: uniqueEntries, reachability, evidencePaths, candidates, uncertainties };
+  const relevantBlockers = blockers.filter((blocker) =>
+    blocker.code !== "dynamic-type"
+      || blocker.symbolId === undefined
+      || reachability[blocker.symbolId] === "production",
+  );
+  const candidates = buildCandidates(symbols, reachability, exposures);
+  return { references, entryPoints: uniqueEntries, reachability, evidencePaths, candidates, blockers: relevantBlockers, exposures };
 }
 
 class SymbolIndex {
@@ -116,11 +125,15 @@ class SymbolIndex {
   readonly types = new Map<string, ApexSymbol[]>();
   readonly methodsByOwnerNameArity = new Map<string, ApexSymbol[]>();
   readonly methodsByNameArity = new Map<string, ApexSymbol[]>();
+  private readonly allTypes: ApexSymbol[] = [];
+  private readonly dispatchCache = new Map<string, ApexSymbol[]>();
+  private readonly subtypeCache = new Map<string, boolean>();
 
   constructor(symbols: ApexSymbol[]) {
     for (const symbol of symbols) {
       this.byId.set(symbol.id, symbol);
       if (isType(symbol)) {
+        this.allTypes.push(symbol);
         add(this.types, normalizeName(symbol.qualifiedName), symbol);
         add(this.types, normalizeName(symbol.name), symbol);
       }
@@ -158,6 +171,50 @@ class SymbolIndex {
       .filter(([key]) => key.startsWith(prefix))
       .flatMap(([, values]) => values);
   }
+
+  findDispatchMembers(receiverTypes: ApexSymbol[], name: string, arity?: number): ApexSymbol[] {
+    const cacheKey = `${receiverTypes.map((type) => type.id).sort().join(",")}|${normalizeName(name)}/${arity ?? "*"}`;
+    const cached = this.dispatchCache.get(cacheKey);
+    if (cached) return cached;
+    const owners = unique(receiverTypes.flatMap((receiver) => [
+      receiver,
+      ...this.allTypes.filter((candidate) => this.isSubtypeOf(candidate, receiver)),
+    ]));
+    const result = unique(owners.flatMap((owner) => this.findMembers(owner.id, name, arity)));
+    this.dispatchCache.set(cacheKey, result);
+    return result;
+  }
+
+  findPlatformCallbacks(type: ApexSymbol): ApexSymbol[] {
+    const callbackNames = new Set(
+      type.interfaces.flatMap((implemented) => [
+        ...(PLATFORM_CALLBACKS[normalizeName(simpleTypeName(implemented))] ?? []),
+      ]),
+    );
+    return this.findAllMembers(type.id).filter((member) => callbackNames.has(normalizeName(member.name)));
+  }
+
+  private isSubtypeOf(candidate: ApexSymbol, expectedBase: ApexSymbol): boolean {
+    const cacheKey = `${candidate.id}|${expectedBase.id}`;
+    const cached = this.subtypeCache.get(cacheKey);
+    if (cached !== undefined) return cached;
+    const result = this.computeSubtype(candidate, expectedBase, new Set<string>());
+    this.subtypeCache.set(cacheKey, result);
+    return result;
+  }
+
+  private computeSubtype(candidate: ApexSymbol, expectedBase: ApexSymbol, seen: Set<string>): boolean {
+    if (candidate.id === expectedBase.id || seen.has(candidate.id)) return candidate.id === expectedBase.id;
+    seen.add(candidate.id);
+    const bases = [...candidate.interfaces, ...(candidate.superclass ? [candidate.superclass] : [])];
+    for (const baseName of bases) {
+      if (normalizeName(simpleTypeName(baseName)) === normalizeName(expectedBase.name)) return true;
+      for (const base of this.findTypes(baseName)) {
+        if (this.computeSubtype(base, expectedBase, seen)) return true;
+      }
+    }
+    return false;
+  }
 }
 
 function resolveReference(raw: RawReference, index: SymbolIndex): ApexSymbol[] {
@@ -169,7 +226,8 @@ function resolveReference(raw: RawReference, index: SymbolIndex): ApexSymbol[] {
     if (!raw.targetType) return [];
     const types = index.findTypes(raw.targetType);
     const constructors = types.flatMap((type) => index.findMembers(type.id, type.name, raw.arity));
-    return constructors.length > 0 ? unique(constructors) : types;
+    const callbacks = types.flatMap((type) => index.findPlatformCallbacks(type));
+    return unique([...(constructors.length > 0 ? constructors : types), ...callbacks]);
   }
 
   if (raw.kind === "metadata") {
@@ -182,6 +240,12 @@ function resolveReference(raw: RawReference, index: SymbolIndex): ApexSymbol[] {
           ...types.flatMap((type) => index.findAllMembers(type.id).filter((member) => member.modifiers.includes("public") || member.modifiers.includes("global"))),
         ]);
       }
+      if (raw.detail.startsWith("Flow Apex action")) {
+        return unique([
+          ...types,
+          ...types.flatMap((type) => index.findAllMembers(type.id).filter((member) => member.annotations.includes("invocablemethod"))),
+        ]);
+      }
       return types;
     }
     const memberName = raw.memberName;
@@ -190,7 +254,7 @@ function resolveReference(raw: RawReference, index: SymbolIndex): ApexSymbol[] {
 
   if (raw.kind === "call" && raw.memberName) {
     const receiverTypes = raw.receiverType ? index.findTypes(raw.receiverType) : [];
-    const owned = receiverTypes.flatMap((type) => index.findMembers(type.id, raw.memberName!, raw.arity));
+    const owned = index.findDispatchMembers(receiverTypes, raw.memberName, raw.arity);
     if (owned.length > 0) return unique(owned);
     const receiverSimple = normalizeName(simpleTypeName(raw.receiverType ?? ""));
     if (BUILTIN_RECEIVERS.has(receiverSimple)) return [];
@@ -248,12 +312,11 @@ function pathTo(id: string, parent: Map<string, string | undefined>): string[] {
 function buildCandidates(
   symbols: ApexSymbol[],
   reachability: Record<string, Reachability>,
-  uncertainties: Uncertainty[],
+  exposures: ExposureSignal[],
 ): RecoveryCandidate[] {
-  const hasDynamicType = uncertainties.some((item) => item.code === "dynamic-type");
-  const symbolUncertainties = new Map<string, Uncertainty[]>();
-  for (const uncertainty of uncertainties) {
-    if (uncertainty.symbolId) add(symbolUncertainties, uncertainty.symbolId, uncertainty);
+  const exposuresBySymbol = new Map<string, ExposureSignal[]>();
+  for (const exposure of exposures) {
+    add(exposuresBySymbol, exposure.symbolId, exposure);
   }
   const membersByOwner = new Map<string, ApexSymbol[]>();
   for (const symbol of symbols) {
@@ -268,57 +331,37 @@ function buildCandidates(
       const productionMembers = (membersByOwner.get(symbol.id) ?? []).filter((member) => !member.testCode);
       if (productionMembers.some((member) => reachability[member.id] !== "unreachable")) continue;
     }
-    const attached = symbolUncertainties.get(symbol.id) ?? [];
-    const confidence = candidateConfidence(symbol, attached, hasDynamicType);
+    const relatedIds = isType(symbol)
+      ? [symbol.id, ...(membersByOwner.get(symbol.id) ?? []).map((member) => member.id)]
+      : [symbol.id];
+    const attachedExposures = relatedIds.flatMap((id) => exposuresBySymbol.get(id) ?? []);
     candidates.push({
       symbolId: symbol.id,
       kind: symbol.kind,
       qualifiedName: symbol.qualifiedName,
-      confidence,
+      classification: "unreachable-in-repository",
       sourceCharacters: symbol.sourceCharacters,
       sourceBytes: symbol.sourceBytes,
       reasons: [
         "No path from a known production entry point was found.",
         ...(isType(symbol) ? ["No production-reachable member was found in this top-level type."] : []),
       ],
-      uncertainties: [
-        ...attached.map((item) => item.message),
-        ...(hasDynamicType && isTypeOrConstructor(symbol)
-          ? ["The project contains a computed Type.forName reference."]
-          : []),
-      ],
+      exposures: [...new Set(attachedExposures.map((item) => item.reason))],
       location: symbol.location,
     });
   }
   return candidates.sort(compareCandidates);
 }
 
-function candidateConfidence(symbol: ApexSymbol, attached: Uncertainty[], hasDynamicType: boolean): Confidence {
-  let risk = 0;
-  if (attached.some((item) => item.code === "external-callable")) risk += 1;
-  if (hasDynamicType && isTypeOrConstructor(symbol)) risk += 1;
-  return risk >= 2 ? "low" : risk === 1 ? "medium" : "high";
-}
-
 function shouldReportUnresolved(raw: RawReference, index: SymbolIndex): boolean {
-  if (raw.kind === "call") {
-    const receiver = normalizeName(simpleTypeName(raw.receiverType ?? ""));
-    if (BUILTIN_RECEIVERS.has(receiver)) return false;
-    if (raw.receiverType && index.findTypes(raw.receiverType).length === 0 && /^[A-Z]/.test(raw.receiverType)) return false;
+  if (raw.kind === "construct") {
+    return Boolean(raw.targetType && index.findTypes(raw.targetType).length > 0);
   }
-  if ((raw.kind === "type" || raw.kind === "inheritance") && raw.targetType) {
-    const type = normalizeName(simpleTypeName(raw.targetType));
-    if (BUILTIN_RECEIVERS.has(type) || /^[A-Z][A-Za-z0-9_]*__(c|mdt|e|b|x)$/i.test(simpleTypeName(raw.targetType))) return false;
-  }
-  return raw.kind === "metadata" || raw.kind === "construct" || raw.kind === "call";
+  return false;
 }
 
 function isType(symbol: ApexSymbol): boolean {
   return symbol.kind === "class" || symbol.kind === "interface" || symbol.kind === "enum" || symbol.kind === "trigger";
-}
-
-function isTypeOrConstructor(symbol: ApexSymbol): boolean {
-  return isType(symbol) || symbol.kind === "constructor";
 }
 
 function add<T>(map: Map<string, T[]>, key: string, value: T): void {
@@ -336,8 +379,6 @@ function dedupeEntries(entries: EntryPoint[]): EntryPoint[] {
 }
 
 function compareCandidates(left: RecoveryCandidate, right: RecoveryCandidate): number {
-  const confidenceOrder: Record<Confidence, number> = { high: 0, medium: 1, low: 2 };
-  return confidenceOrder[left.confidence] - confidenceOrder[right.confidence]
-    || right.sourceBytes - left.sourceBytes
+  return right.sourceBytes - left.sourceBytes
     || left.qualifiedName.localeCompare(right.qualifiedName);
 }

@@ -1,8 +1,7 @@
-export const REPORT_SCHEMA_VERSION = "1.0.0" as const;
+export const REPORT_SCHEMA_VERSION = "2.0.0" as const;
 
 export type SymbolKind = "class" | "interface" | "enum" | "trigger" | "method" | "constructor";
 export type Reachability = "production" | "test-only" | "unreachable";
-export type Confidence = "high" | "medium" | "low";
 export type ReferenceKind = "call" | "construct" | "type" | "inheritance" | "metadata";
 export type Resolution = "exact" | "conservative" | "unresolved";
 
@@ -63,30 +62,35 @@ export interface EntryPoint {
   location: SourceLocation;
 }
 
-export interface Uncertainty {
+export interface AnalysisBlocker {
   code:
     | "dynamic-type"
-    | "external-callable"
-    | "ambiguous-dispatch"
     | "unresolved-reference"
     | "parse-error"
-    | "duplicate-symbol"
-    | "metadata-gap";
+    | "duplicate-symbol";
   scope: "project" | "symbol" | "reference";
   message: string;
+  blocksClosedWorldConclusion: boolean;
   symbolId?: string;
   location?: SourceLocation;
+}
+
+export interface ExposureSignal {
+  symbolId: string;
+  kind: "annotation" | "visibility" | "platform-callback" | "webservice";
+  reason: string;
+  location: SourceLocation;
 }
 
 export interface RecoveryCandidate {
   symbolId: string;
   kind: SymbolKind;
   qualifiedName: string;
-  confidence: Confidence;
+  classification: "unreachable-in-repository";
   sourceCharacters: number;
   sourceBytes: number;
   reasons: string[];
-  uncertainties: string[];
+  exposures: string[];
   location: SourceLocation;
 }
 
@@ -147,13 +151,19 @@ export interface AnalysisReport {
   inventory: ProjectInventory;
   summary: AnalysisSummary;
   executive: ExecutiveWasteSummary;
+  analysis: {
+    universe: "repository";
+    assumption: string;
+    status: "complete" | "blocked";
+    blockers: AnalysisBlocker[];
+  };
   symbols: ApexSymbol[];
   references: ReferenceEdge[];
   entryPoints: EntryPoint[];
   reachability: Record<string, Reachability>;
   evidencePaths: Record<string, string[]>;
   candidates: RecoveryCandidate[];
-  uncertainties: Uncertainty[];
+  exposures: ExposureSignal[];
   diagnostics: ParseDiagnostic[];
 }
 
@@ -170,6 +180,7 @@ export interface ExtractedFile {
   symbols: ApexSymbol[];
   references: RawReference[];
   entryPoints: EntryPoint[];
-  uncertainties: Uncertainty[];
+  blockers: AnalysisBlocker[];
+  exposures: ExposureSignal[];
   diagnostics: ParseDiagnostic[];
 }

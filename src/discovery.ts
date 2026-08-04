@@ -13,14 +13,20 @@ export interface ProjectFiles {
 
 const APEX_GLOBS = ["**/*.cls", "**/*.trigger"];
 const METADATA_GLOBS = [
-  "**/*.page",
-  "**/*.component",
+  "**/*.xml",
+  "**/*.js",
+  "**/*.ts",
+  "**/*.json",
+  "**/*.html",
+  "**/*.css",
   "**/*.cmp",
   "**/*.app",
-  "**/*.flow-meta.xml",
+  "**/*.page",
+  "**/*.component",
   "**/*.flow",
-  "**/*.md-meta.xml",
-  "**/*.js",
+  "**/*.yaml",
+  "**/*.yml",
+  "**/*.txt",
 ];
 const DEFAULT_IGNORES = [
   "**/node_modules/**",

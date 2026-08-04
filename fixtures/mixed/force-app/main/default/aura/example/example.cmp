@@ -1,0 +1,3 @@
+<aura:component controller="AuraController">
+    <lightning:button label="Load" onclick="{!c.load}" />
+</aura:component>

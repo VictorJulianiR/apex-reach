@@ -11,13 +11,15 @@ It does **not** send source code to an LLM or require access to a Salesforce org
 - resolved and conservative dependency edges with source locations;
 - production, test-only, and unreachable classifications;
 - shortest evidence paths from entry points to reachable symbols;
-- top-level recovery candidates with raw size, confidence, and uncertainty;
+- top-level recovery candidates with raw size, binary repository classification, and exposure flags;
 - method candidates inside live classes for refactoring;
 - machine-readable JSON plus a review-oriented Markdown report.
 
 The executive report deliberately centers two business questions: **what can be deprecated?** and **what should be refactored because it is redundant?** Reachability provides the first percentage today. Redundancy remains explicitly unmeasured until token-based clone analysis is implemented; the tool never fabricates a number to complete a dashboard.
 
-The primary result is a **recovery candidate**, not a “safe to delete” verdict. Offline analysis cannot observe org-only metadata, queued or scheduled jobs, configuration data that was not retrieved, managed-package consumers, or external REST/SOAP callers.
+The primary result is a deterministic **closed-world repository classification**. It assumes every deployable Apex file and every metadata/configuration file that defines production calls is present in the SFDX package directories. Within that declared universe a symbol is either production-reachable, test-only, or unreachable; the tool does not assign probability. Callers outside the repository, such as an external REST client, are outside the result by definition and are listed as exposure signals instead of changing reachability.
+
+If parsing, dynamic type construction, duplicate symbols, or unresolved calls prevent a complete conclusion, the report status is `blocked` and lists every blocker at its exact file and line. A blocker is never converted into “medium” or “low” confidence for unrelated candidates.
 
 ## Install on Windows (no admin required)
 
@@ -65,7 +67,7 @@ Useful options:
 --full-graph
 ```
 
-The default JSON retains the edges needed for reachability evidence, candidate review, metadata, ambiguity, and unresolved observations. `--full-graph` includes every resolved edge and can create a very large file on enterprise repositories.
+The default JSON retains the edges needed for reachability evidence, candidate review, metadata, conservative dispatch, and analysis blockers. `--full-graph` includes every resolved edge and can create a very large file on enterprise repositories.
 
 The analyzer can also be embedded:
 
@@ -78,17 +80,17 @@ const markdown = renderMarkdown(report);
 
 ## Entry points and references covered
 
-The current analyzer treats these as production entry evidence:
+The current analyzer treats only concrete execution evidence as a production entry:
 
 - triggers;
-- Apex REST, SOAP, Aura, invocable, remote, namespace-accessible, and async annotations;
-- `Queueable`, `Schedulable`, `Batchable`, `Callable`, inbound email, install, and uninstall callbacks;
-- `global` methods;
 - LWC `@salesforce/apex/Class.method` imports;
-- Aura server-side controllers;
+- Aura controller bindings and the exact server methods requested through `c.method`;
 - Visualforce controllers, extensions, actions, and their public methods;
 - Flow Apex actions;
-- Custom Metadata string values that resolve exactly to a local Apex type.
+- Custom Metadata string values that resolve exactly to a local Apex type;
+- conservative exact configuration values found in every text metadata file under each SFDX package directory (class names embedded in prose do not count as calls).
+
+Callable annotations, `global`/`public` visibility, webservice methods, and platform callback interfaces are reported as **exposure**, not proof of a call. They become reachable only through an actual Apex or metadata reference in the repository. Test methods are separate test-only entry points.
 
 Within Apex it extracts method calls, constructors, declared types, inheritance, typed receiver dispatch, static member access, and literal/computed `Type.forName` signals. Overloads are resolved by owner, name, and arity; ambiguous dispatch is deliberately conservative.
 
@@ -98,7 +100,7 @@ Raw characters and UTF-8 bytes are useful offline estimates, not the exact deplo
 
 ## Validation
 
-The test suite covers production/test-only reachability, trigger dispatch, LWC imports, Custom Metadata, computed dynamic types, confidence grading, and report generation.
+The test suite covers production/test-only reachability, trigger dispatch, LWC imports, Aura bundle calls, Custom Metadata, annotation-only dead code, computed dynamic blockers, binary candidates, and report generation.
 
 ```sh
 npm run check
@@ -109,6 +111,6 @@ The analyzer was also exercised against Salesforce-maintained public SFDX reposi
 
 ## Design
 
-The stable module interface is a single read-only operation: `analyzeProject(path, options) -> versioned report`. Discovery, Apex parsing, metadata extraction, graph resolution, confidence, and presentation remain behind that seam. See [domain language](CONTEXT.md) and [ADR 0001](docs/adr/0001-evidence-first-static-analysis.md).
+The stable module interface is a single read-only operation: `analyzeProject(path, options) -> versioned report`. Discovery, Apex parsing, complete text-metadata scanning, graph resolution, blocker detection, and presentation remain behind that seam. See [domain language](CONTEXT.md) and [ADR 0001](docs/adr/0001-evidence-first-static-analysis.md).
 
-The next highest-value extension is optional org enrichment, followed by more configuration metadata and runtime telemetry. The deterministic offline report remains the source of facts.
+The next highest-value extension is deterministic SOQL-family analysis for selector-layer refactoring, kept separate from the deletion percentage. The offline report remains the source of facts.
