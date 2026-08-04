@@ -29,7 +29,7 @@ cd apex-reach
 install.bat
 ```
 
-Alternatively, download and extract the repository ZIP, then double-click `install.bat`. It installs under `%LOCALAPPDATA%\apex-reach` and updates only the current user's PATH. Open a new terminal after installation.
+Alternatively, download and extract the repository ZIP, then double-click `install.bat`. It installs under `%LOCALAPPDATA%\apex-reach` and creates the `apex-reach` command in `%APPDATA%\npm`, the standard per-user npm command folder. It does not require administrator access or change your PATH. If the command is not recognized, use `%APPDATA%\npm\apex-reach.cmd` directly.
 
 Run the analyzer:
 

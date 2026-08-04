@@ -32,10 +32,15 @@ if "%APEX_REACH_INSTALL_DIR%"=="" (
 ) else (
   set "INSTALL_DIR=%APEX_REACH_INSTALL_DIR%"
 )
-set "BIN_DIR=%INSTALL_DIR%\bin"
+
+if "%APEX_REACH_SHIM_DIR%"=="" (
+  set "SHIM_DIR=%APPDATA%\npm"
+) else (
+  set "SHIM_DIR=%APEX_REACH_SHIM_DIR%"
+)
 
 if not exist "%INSTALL_DIR%" mkdir "%INSTALL_DIR%"
-if not exist "%BIN_DIR%" mkdir "%BIN_DIR%"
+if not exist "%SHIM_DIR%" mkdir "%SHIM_DIR%"
 
 echo Installing into %INSTALL_DIR%...
 xcopy "%~dp0dist" "%INSTALL_DIR%\dist" /E /I /Y /Q >nul
@@ -52,21 +57,24 @@ if errorlevel 1 (
 )
 popd
 
-> "%BIN_DIR%\apex-reach.cmd" echo @echo off
->> "%BIN_DIR%\apex-reach.cmd" echo node "%%~dp0..\dist\cli.js" %%*
+> "%SHIM_DIR%\apex-reach.cmd" echo @echo off
+>> "%SHIM_DIR%\apex-reach.cmd" echo node "%INSTALL_DIR%\dist\cli.js" %%*
 
-if not "%APEX_REACH_SKIP_PATH%"=="1" (
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "$bin=[IO.Path]::GetFullPath('%BIN_DIR%'); $userPath=[Environment]::GetEnvironmentVariable('Path','User'); $parts=@($userPath -split ';' ^| Where-Object { $_ }); if ($parts -notcontains $bin) { [Environment]::SetEnvironmentVariable('Path', (($parts + $bin) -join ';'), 'User') }"
-  if errorlevel 1 goto :failed
-)
-
-call "%BIN_DIR%\apex-reach.cmd" --version
+call "%SHIM_DIR%\apex-reach.cmd" --version
 if errorlevel 1 goto :failed
 
 echo.
 echo apex-reach installed successfully.
-echo Open a new terminal and run:
+echo Command installed at:
+echo   %SHIM_DIR%\apex-reach.cmd
+echo.
+echo Run:
 echo   apex-reach C:\path\to\your\sfdx-project
+where apex-reach >nul 2>nul
+if errorlevel 1 (
+  echo.
+  echo If apex-reach is not recognized, run it using the full command path above.
+)
 echo.
 exit /b 0
 
