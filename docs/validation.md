@@ -1,10 +1,10 @@
 # Validation results
 
-Validation was rerun on 4 August 2026 with `apex-reach` 0.3.0. Repository clones and generated reports live under the ignored `validation/` directory so they do not become product dependencies.
+Validation was rerun on 6 August 2026 with `apex-reach` 0.4.0. Repository clones and generated reports live under the ignored `validation/` directory so they do not become product dependencies.
 
 ## Automated fixtures
 
-Fifteen tests exercise the original reachability/installer contract plus:
+Eighteen tests exercise the original reachability/installer contract plus:
 
 - trigger-to-handler and internal method reachability;
 - production, test-only, and unreachable classifications;
@@ -14,6 +14,8 @@ Fifteen tests exercise the original reachability/installer contract plus:
 - class names embedded in human-readable metadata prose not becoming calls;
 - interface/runtime dispatch and constructed platform callbacks;
 - computed `Type.forName` blocking only when its containing symbol is production-reachable;
+- interprocedural `Type.forName` provenance through SOQL assignment, `getInstance`, `getAll`, nested selectors, and wrapper parameters;
+- conditional runtime overrides remaining blocked even when their default value is versioned Custom Metadata;
 - probability-free candidates and exact blocker locations;
 - exclusion of `@isTest` source from the production footprint;
 - Markdown report and Windows installer behavior.
@@ -24,7 +26,7 @@ Fifteen tests exercise the original reachability/installer contract plus:
 - binary Flow eligibility, callout/order blockers, and Git revision capture;
 - `this`, `new LocalType()`, unknown-chain dispatch, and `new Http().send()` collision cases.
 
-Result: 15/15 passed, with TypeScript checking and production build also passing.
+Result: 18/18 passed, with TypeScript checking and production build also passing.
 
 ## trailheadapps/apex-recipes
 
@@ -32,7 +34,7 @@ Result: 15/15 passed, with TypeScript checking and production build also passing
 - 628,433 raw Apex characters, 312,090 in non-test source;
 - 905 symbols and 2,176 retained reference edges;
 - 0 unresolved local references and 0 parse diagnostics;
-- completed in approximately 1.8 seconds;
+- completed in approximately 1.6 seconds;
 - 1 top-level repository-unreachable type and 21 member candidates;
 - 8,125 repository-unreachable raw production characters (2.60%);
 - 1 blocking, production-reachable computed `Type.forName` site.
@@ -48,10 +50,10 @@ The sole top-level candidate remains `SchemaRecipes`. Visibility is reported as 
 - 14,669,238 raw Apex characters, 7,014,573 in non-test source;
 - 14,098 symbols and 149,003 retained reference edges;
 - 0 unresolved local references and 0 parse diagnostics;
-- completed in approximately 57.8 seconds with the full quality analysis;
+- completed in approximately 76.1 seconds with the full quality analysis;
 - 5 top-level repository-unreachable types and 346 member candidates;
 - 109,589 repository-unreachable raw production characters (1.56%);
-- 19 blocking, production-reachable computed `Type.forName` sites.
+- 18 blocking, production-reachable computed `Type.forName` sites after one repository-backed path was resolved interprocedurally.
 - 313 clone families covering 4.88% of production Apex; repeated occurrences cover 3.03%;
 - 92 SOQL families, 165 unresolved dynamic-query blockers, and 47 compatible DML families;
 - 26 trigger paths blocked by incomplete dynamic/dispatch evidence, so no Flow eligibility is claimed.
@@ -78,4 +80,4 @@ The top-level set is `fflib_RecordTypeId`, `HH_ManageHousehold_EXT`, `RP_HTTPCli
 - Arbitrary dynamic SOQL. Unfoldable query strings block selector-family coverage instead of silently lowering the result.
 - Automatic Flow conversion for framework-heavy paths with dynamic dispatch or incomplete order evidence; these remain blocked.
 
-The next precision step is interprocedural string/value propagation for dynamic type and query construction. Selector/DML findings remain separate from the deletion percentage.
+The next precision step is richer interprocedural folding for runtime-built SOQL. Selector/DML findings remain separate from the deletion percentage.

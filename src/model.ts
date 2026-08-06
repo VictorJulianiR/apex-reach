@@ -40,6 +40,7 @@ export interface RawReference {
   receiver?: string | undefined;
   receiverType?: string | undefined;
   targetType?: string | undefined;
+  arguments?: string[] | undefined;
   testContext: boolean;
   location: SourceLocation;
   detail: string;
@@ -53,6 +54,7 @@ export interface ReferenceEdge {
   testContext: boolean;
   location: SourceLocation;
   detail: string;
+  arguments?: string[];
 }
 
 export interface EntryPoint {
@@ -74,6 +76,8 @@ export interface AnalysisBlocker {
   blocksClosedWorldConclusion: boolean;
   symbolId?: string;
   repositoryMetadataField?: string;
+  dynamicExpression?: string;
+  dynamicReasons?: string[];
   location?: SourceLocation;
 }
 
@@ -143,6 +147,8 @@ export interface ExecutableBehavior {
   throws: number;
   assignments: number;
   assignmentTargets: string[];
+  valueBindings: Array<{ name: string; type: string; expression: string; conditional: boolean; location: SourceLocation }>;
+  returnExpressions: Array<{ expression: string; location: SourceLocation }>;
   enhancedForLoops: Array<{ variable: string; collection: string }>;
   advancedCollectionTypes: string[];
   callDetails: string[];

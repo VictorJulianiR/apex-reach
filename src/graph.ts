@@ -58,6 +58,7 @@ export function buildGraph(
           testContext: raw.testContext,
           location: raw.location,
           detail: raw.detail,
+          ...(raw.arguments ? { arguments: raw.arguments } : {}),
         });
         blockers.push({
           code: "unresolved-reference",
@@ -81,6 +82,7 @@ export function buildGraph(
         testContext: raw.testContext,
         location: raw.location,
         detail: raw.detail,
+        ...(raw.arguments ? { arguments: raw.arguments } : {}),
       });
       if (!raw.sourceId && raw.kind === "metadata") {
         entryPoints.push({

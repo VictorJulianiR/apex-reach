@@ -4,6 +4,7 @@ import path from "node:path";
 import { Command, Option } from "commander";
 import { analyzeProject } from "./analyze.js";
 import { renderMarkdown } from "./report.js";
+import { TOOL_VERSION } from "./version.js";
 
 interface CliOptions {
   format: "json" | "markdown" | "both";
@@ -16,7 +17,7 @@ interface CliOptions {
 const program = new Command()
   .name("apex-reach")
   .description("Evidence-first recovery analysis for Salesforce DX Apex code")
-  .version("0.3.0")
+  .version(TOOL_VERSION)
   .argument("[project]", "SFDX project directory", ".")
   .addOption(new Option("-f, --format <format>", "report format").choices(["json", "markdown", "both"]).default("both"))
   .option("-o, --output <base>", "output file base (extensions are added)", "apex-reach-report")

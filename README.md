@@ -18,18 +18,20 @@ It does **not** send source code to an LLM or require access to a Salesforce org
 - static and constant-folded dynamic SOQL families, with runtime-dependent query sites explicitly excluded from family totals;
 - compatible DML/domain-operation families that preserve transaction and access-mode differences;
 - binary trigger-to-Flow eligibility with explicit order, bulk, transaction, recursion, security, callout, async, and coverage blockers;
-- analyzed Git branch, commit, and dirty state in every report.
-- repository-backed `Type.forName` resolution when a typed `__mdt` SOQL result reads a class-name field whose Custom Metadata records are versioned in the project;
+- analyzed Git branch, commit, and dirty state in every report;
+- interprocedural `Type.forName` provenance through local assignments, typed Custom Metadata retrieval, selectors, and helper/wrapper methods.
 
 The executive report keeps three lanes separate: **certified repository-unreachable Apex**, **duplicate/refactor coverage**, and **Apex proven removable by Flow conversion**. They are not added together because source intervals can overlap, and duplicate coverage is not guaranteed savings after abstraction overhead.
 
 The primary result is a deterministic **closed-world repository classification**. It assumes every deployable Apex file and every metadata/configuration file that defines production calls is present in the SFDX package directories. Within that declared universe a symbol is either production-reachable, test-only, or unreachable; the tool does not assign probability. Callers outside the repository, such as an external REST client, are outside the result by definition and are listed as exposure signals instead of changing reachability.
 
-If parsing, dynamic type construction, duplicate symbols, or unresolved calls prevent a complete reachability conclusion, the report labels deprecation candidates **not certified**, groups every blocker by concrete cause, and lists its exact file and line. Nothing is called safe while certification is blocked. Dynamic SOQL exclusions do not invalidate resolved query-family findings: the Markdown reports resolved families and excluded call sites separately. A blocker is never converted into a confidence score. Clone similarity is a reproducible threshold measurement, not probability.
+If parsing, dynamic type construction, duplicate symbols, or unresolved calls prevent a complete reachability conclusion, the report labels deprecation candidates **not certified**, groups every blocker by concrete cause, and lists its exact file and line. Remaining dynamic-type blockers also include the unresolved value chain or the exact unversioned Custom Metadata field. Nothing is called safe while certification is blocked. Dynamic SOQL exclusions do not invalidate resolved query-family findings: the Markdown reports resolved families and excluded call sites separately. A blocker is never converted into a confidence score. Clone similarity is a reproducible threshold measurement, not probability.
 
 When the same top-level class or trigger exists in multiple package directories, it produces one component-level blocker. Its methods are not counted again as independent blockers, and every duplicate path is printed in the certification section.
 
-A computed `Type.forName` remains blocking unless its source is proven. For Custom Metadata, proof requires a variable initialized by SOQL from a concrete `__mdt` type plus at least one versioned record containing the referenced field. Merely having a `List<...__mdt>` parameter is not enough.
+A computed `Type.forName` remains blocking unless every production path to its class-name argument is proven. The resolver follows direct and later SOQL assignments, `__mdt.getInstance(...)`, `__mdt.getAll().values()`, selectors and helper chains that return typed metadata, local aliases, string literals, and wrapper parameters whose production callers are all closed. Conditional assignments are merged: one runtime-open branch keeps the site blocked.
+
+Custom Metadata proof also requires at least one versioned record containing the referenced field. Merely declaring a `List<...__mdt>` parameter, returning an unproven runtime value, or having the field definition without record values is not enough. With `--full-graph`, every resolved literal class target includes a `Resolved Type.forName value` edge; metadata-backed targets retain their exact metadata entry points.
 
 The Markdown report is intentionally operational: it shows at most 25 findings per large analysis table and keeps the complete evidence set in JSON.
 
@@ -104,7 +106,7 @@ The current analyzer treats only concrete execution evidence as a production ent
 
 Callable annotations, `global`/`public` visibility, webservice methods, and platform callback interfaces are reported as **exposure**, not proof of a call. They become reachable only through an actual Apex or metadata reference in the repository. Test methods are separate test-only entry points.
 
-Within Apex it extracts method calls, constructors, declared types, inheritance, typed receiver dispatch, static member access, and literal/computed `Type.forName` signals. Overloads are resolved by owner, name, and arity; ambiguous dispatch is deliberately conservative.
+Within Apex it extracts method calls and arguments, constructors, declared types, inheritance, typed receiver dispatch, static member access, local value bindings, return expressions, and literal/computed `Type.forName` signals. Overloads are resolved by owner, name, and arity; ambiguous dispatch is deliberately conservative.
 
 ## Size semantics
 

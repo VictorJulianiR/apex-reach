@@ -28,6 +28,7 @@ import {
   type MergeStatementContext,
   type ApexParserRuleContext,
   type QueryContext,
+  type ReturnStatementContext,
   type StatementContext,
   type SwitchStatementContext,
   type ThrowStatementContext,
@@ -143,6 +144,7 @@ class ExtractionListener extends ApexParserBaseListener {
   private readonly typeStack: Scope[] = [];
   private readonly executableStack: Scope[] = [];
   private readonly behaviorStack: ExecutableBehavior[] = [];
+  private controlDepth = 0;
 
   constructor(
     private readonly source: string,
@@ -277,6 +279,15 @@ class ExtractionListener extends ApexParserBaseListener {
     for (const variable of ctx.variableDeclarators().variableDeclarator_list()) {
       const name = normalizeName(variable.id().getText());
       scope.variables.set(name, type);
+      if (variable.ASSIGN()) {
+        this.currentBehavior()?.valueBindings.push({
+          name,
+          type,
+          expression: variable.expression().getText(),
+          conditional: this.controlDepth > 0,
+          location: this.location(variable),
+        });
+      }
       if (normalizeName(type) === "string" && isFinalField(ctx) && variable.ASSIGN()) {
         const value = foldApexString(variable.expression().getText(), (identifier) => this.resolveStringValue(identifier));
         if (value !== undefined) scope.strings.set(name, value);
@@ -303,7 +314,15 @@ class ExtractionListener extends ApexParserBaseListener {
         if (value !== undefined) scope.strings.set(name, value);
       }
       if (variable.ASSIGN()) {
-        const metadataType = repositoryMetadataQueryType(type, variable.expression().getText());
+        const expression = variable.expression().getText();
+        this.currentBehavior()?.valueBindings.push({
+          name,
+          type,
+          expression,
+          conditional: this.controlDepth > 0,
+          location: this.location(variable),
+        });
+        const metadataType = repositoryMetadataExpressionType(type, expression);
         if (metadataType) scope.repositoryMetadataVariables.set(name, metadataType);
       }
     }
@@ -322,31 +341,61 @@ class ExtractionListener extends ApexParserBaseListener {
   enterIfStatement(_ctx: IfStatementContext): void {
     const behavior = this.currentBehavior();
     if (behavior) behavior.branches += 1;
+    this.controlDepth += 1;
+  }
+
+  exitIfStatement(): void {
+    this.controlDepth -= 1;
   }
 
   enterSwitchStatement(_ctx: SwitchStatementContext): void {
     const behavior = this.currentBehavior();
     if (behavior) behavior.branches += 1;
+    this.controlDepth += 1;
+  }
+
+  exitSwitchStatement(): void {
+    this.controlDepth -= 1;
   }
 
   enterForStatement(_ctx: ForStatementContext): void {
     const behavior = this.currentBehavior();
     if (behavior) behavior.loops += 1;
+    this.controlDepth += 1;
+  }
+
+  exitForStatement(): void {
+    this.controlDepth -= 1;
   }
 
   enterWhileStatement(_ctx: WhileStatementContext): void {
     const behavior = this.currentBehavior();
     if (behavior) behavior.loops += 1;
+    this.controlDepth += 1;
+  }
+
+  exitWhileStatement(): void {
+    this.controlDepth -= 1;
   }
 
   enterDoWhileStatement(_ctx: DoWhileStatementContext): void {
     const behavior = this.currentBehavior();
     if (behavior) behavior.loops += 1;
+    this.controlDepth += 1;
+  }
+
+  exitDoWhileStatement(): void {
+    this.controlDepth -= 1;
   }
 
   enterTryStatement(_ctx: TryStatementContext): void {
     const behavior = this.currentBehavior();
     if (behavior) behavior.tryBlocks += 1;
+    this.controlDepth += 1;
+  }
+
+  exitTryStatement(): void {
+    this.controlDepth -= 1;
   }
 
   enterThrowStatement(_ctx: ThrowStatementContext): void {
@@ -357,12 +406,35 @@ class ExtractionListener extends ApexParserBaseListener {
   enterExpressionStatement(ctx: ExpressionStatementContext): void {
     const behavior = this.currentBehavior();
     if (!behavior) return;
-    const assignment = /^(.+?)(?:\+=|-=|\*=|\/=|=(?!=))/.exec(ctx.expression().getText());
+    const expressionText = ctx.expression().getText();
+    const assignment = /^(.+?)(?:\+=|-=|\*=|\/=|=(?!=))/.exec(expressionText);
     if (assignment?.[1]) {
       behavior.assignments += 1;
       behavior.assignmentTargets.push(assignment[1]);
       this.invalidateAssignedString(assignment[1]);
     }
+    const simpleAssignment = /^([A-Za-z_]\w*)=(?!=)([\s\S]+)$/.exec(expressionText);
+    if (simpleAssignment?.[1] && simpleAssignment[2]) {
+      const name = normalizeName(simpleAssignment[1]);
+      const type = this.resolveVariableType(name);
+      if (type) {
+        behavior.valueBindings.push({
+          name,
+          type,
+          expression: simpleAssignment[2],
+          conditional: this.controlDepth > 0,
+          location: this.location(ctx),
+        });
+        const metadataType = repositoryMetadataExpressionType(type, simpleAssignment[2]);
+        if (metadataType) this.currentExecutable()?.repositoryMetadataVariables.set(name, metadataType);
+        else this.currentExecutable()?.repositoryMetadataVariables.delete(name);
+      }
+    }
+  }
+
+  enterReturnStatement(ctx: ReturnStatementContext): void {
+    const expression = ctx.expression()?.getText();
+    if (expression) this.currentBehavior()?.returnExpressions.push({ expression, location: this.location(ctx) });
   }
 
   enterQuery(ctx: QueryContext): void {
@@ -411,12 +483,14 @@ class ExtractionListener extends ApexParserBaseListener {
 
   enterMethodCall(ctx: MethodCallContext): void {
     const name = ctx.id()?.getText() ?? ctx.getText().split("(", 1)[0] ?? "";
+    const argumentsList = ctx.expressionList()?.expression_list() ?? [];
     this.currentBehavior()?.callDetails.push(ctx.getText());
     this.references.push({
       sourceId: this.currentSourceId(),
       kind: "call",
       memberName: name,
       arity: expressionCount(ctx.expressionList()),
+      arguments: argumentsList.map((item) => item.getText()),
       receiverType: this.currentType()?.symbol.qualifiedName,
       testContext: this.inTestContext(),
       location: this.location(ctx),
@@ -428,6 +502,7 @@ class ExtractionListener extends ApexParserBaseListener {
     const parent = ctx.parentCtx as DotExpressionContext;
     const receiver = parent.expression().getText();
     const name = ctx.anyId().getText();
+    const argumentsList = ctx.expressionList()?.expression_list() ?? [];
     const constructedReceiver = /^new([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\(/i.exec(receiver)?.[1];
     const receiverType = normalizeName(receiver) === "this"
       ? (this.currentType()?.symbol.qualifiedName ?? receiver)
@@ -440,6 +515,7 @@ class ExtractionListener extends ApexParserBaseListener {
       kind: "call",
       memberName: name,
       arity: expressionCount(ctx.expressionList()),
+      arguments: argumentsList.map((item) => item.getText()),
       receiver,
       receiverType,
       testContext: this.inTestContext(),
@@ -449,7 +525,6 @@ class ExtractionListener extends ApexParserBaseListener {
 
     if (normalizeName(simpleTypeName(receiverType)) === "database") {
       const normalizedMethod = normalizeName(name);
-      const argumentsList = ctx.expressionList()?.expression_list() ?? [];
       const firstArgument = argumentsList[0]?.getText() ?? "";
       if (normalizedMethod === "query" || normalizedMethod === "querywithbinds") {
         this.recordDynamicQuery(firstArgument, ctx);
@@ -488,6 +563,7 @@ class ExtractionListener extends ApexParserBaseListener {
           blocksClosedWorldConclusion: true,
           ...(sourceId ? { symbolId: sourceId } : {}),
           ...(repositoryMetadataField ? { repositoryMetadataField } : {}),
+          dynamicExpression: argument,
           location: this.location(ctx),
         });
       }
@@ -844,6 +920,8 @@ function newBehavior(symbolId: string): ExecutableBehavior {
     throws: 0,
     assignments: 0,
     assignmentTargets: [],
+    valueBindings: [],
+    returnExpressions: [],
     enhancedForLoops: [],
     advancedCollectionTypes: [],
     callDetails: [],
@@ -927,13 +1005,16 @@ function isFinalField(ctx: FieldDeclarationContext): boolean {
   return declaration.modifier_list?.().some((modifier) => normalizeName(modifier.getText()) === "final") ?? false;
 }
 
-function repositoryMetadataQueryType(declaredType: string, initializer: string): string | undefined {
-  const collectionMember = /^(?:List|Set)<(.+)>$/i.exec(declaredType)?.[1];
+function repositoryMetadataExpressionType(declaredType: string, initializer: string): string | undefined {
+  const collectionMember = /^(?:List|Set)<(.+)>$/i.exec(declaredType)?.[1]
+    ?? /^Map<[^,]+,(.+)>$/i.exec(declaredType)?.[1];
   const metadataType = simpleTypeName(collectionMember ?? declaredType);
   if (!/__mdt$/i.test(metadataType)) return undefined;
   const normalizedInitializer = normalizeName(initializer);
-  if (!normalizedInitializer.startsWith("[select") || !normalizedInitializer.includes(`from${normalizeName(metadataType)}`)) return undefined;
-  return metadataType;
+  if (normalizedInitializer.startsWith("[select") && normalizedInitializer.includes(`from${normalizeName(metadataType)}`)) return metadataType;
+  if (normalizedInitializer.includes(`${normalizeName(metadataType)}.getall()`)
+    || normalizedInitializer.includes(`${normalizeName(metadataType)}.getinstance(`)) return metadataType;
+  return undefined;
 }
 
 function parseDynamicSoql(query: string): Omit<SoqlObservation, "symbolId" | "dynamic" | "location" | "securityMode" | "sharingContext" | "aggregate" | "locking"> | undefined {

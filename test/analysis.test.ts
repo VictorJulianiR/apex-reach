@@ -58,13 +58,31 @@ describe("analyzeProject", () => {
     expect(blocker.location?.path).toContain("DynamicLookup.cls");
   });
 
+  it("keeps a conditional runtime override blocked even when the default comes from Custom Metadata", async () => {
+    const report = await analyzeProject(path.resolve("fixtures/conditional-dynamic-type"));
+    const blocker = report.analysis.blockers.find((item) => item.code === "dynamic-type")!;
+
+    expect(report.analysis.status).toBe("blocked");
+    expect(blocker.symbolId).toContain("conditionalresolver.run");
+    expect(blocker.dynamicExpression).toBe("className");
+    expect(blocker.dynamicReasons?.some((reason) => reason.includes("RootTrigger")
+      && reason.includes("String.valueOf(Trigger.operationType)"))).toBe(true);
+    expect(blocker.message).toContain("Unresolved provenance");
+  });
+
   it("resolves a computed type lookup from repository Custom Metadata values", async () => {
-    const report = await analyzeProject(path.resolve("fixtures/metadata-dynamic-type"));
+    const report = await analyzeProject(path.resolve("fixtures/metadata-dynamic-type"), { fullGraph: true });
     const configured = report.symbols.find((symbol) => symbol.qualifiedName === "ConfiguredService")!;
+    const instantiate = report.symbols.find((symbol) => symbol.qualifiedName === "MetadataTypeResolver.instantiate(String)")!;
 
     expect(report.analysis.blockers.some((item) => item.code === "dynamic-type")).toBe(false);
     expect(report.reachability[configured.id]).toBe("production");
     expect(report.analysis.status).toBe("complete");
+    expect(report.symbols.filter((symbol) => symbol.qualifiedName.startsWith("MetadataTypeResolver.run")
+      && report.reachability[symbol.id] === "production")).toHaveLength(6);
+    expect(report.references.some((reference) => reference.sourceId === instantiate.id
+      && reference.targetId === configured.id
+      && reference.detail.includes("Resolved Type.forName value"))).toBe(true);
 
     const classPath = path.resolve("fixtures/metadata-dynamic-type/force-app/main/default/classes/MetadataTypeResolver.cls");
     const extracted = await extractApexFile(classPath, "force-app/main/default/classes/MetadataTypeResolver.cls");

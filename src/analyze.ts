@@ -2,6 +2,7 @@ import { stat } from "node:fs/promises";
 import path from "node:path";
 import { extractApexFile } from "./apex/extract.js";
 import { discoverProject } from "./discovery.js";
+import { resolveRepositoryDynamicTypes } from "./dynamic-types.js";
 import { buildGraph } from "./graph.js";
 import { analyzeMetadata } from "./metadata.js";
 import { analyzeDuplicates } from "./quality/duplicates.js";
@@ -18,8 +19,7 @@ import {
   type ProjectInventory,
 } from "./model.js";
 import { relativePath } from "./paths.js";
-
-const TOOL_VERSION = "0.3.3";
+import { TOOL_VERSION } from "./version.js";
 
 /**
  * Stable external seam for the analyzer. It performs no writes and requires no Salesforce org.
@@ -42,8 +42,7 @@ export async function analyzeProject(projectPath: string, options: AnalysisOptio
   );
   const diagnostics = apexFiles.flatMap((file) => file.diagnostics);
   const blockers: AnalysisBlocker[] = [
-    ...apexFiles.flatMap((file) => file.blockers)
-      .filter((blocker) => !isResolvedByRepositoryMetadata(blocker, metadata.configuredTypeFields)),
+    ...apexFiles.flatMap((file) => file.blockers),
     ...diagnostics.map((diagnostic): AnalysisBlocker => ({
       code: "parse-error",
       scope: "project",
@@ -54,12 +53,29 @@ export async function analyzeProject(projectPath: string, options: AnalysisOptio
     ...duplicateSymbolBlockers(symbols),
   ];
   const exposures = apexFiles.flatMap((file) => file.exposures);
-
+  const declaredEntries = apexFiles.flatMap((file) => file.entryPoints);
+  const rawReferences = [...apexFiles.flatMap((file) => file.references), ...metadata.references];
+  const preliminaryGraph = buildGraph(
+    symbols,
+    rawReferences,
+    declaredEntries,
+    blockers,
+    exposures,
+  );
+  const dynamicTypes = resolveRepositoryDynamicTypes({
+    blockers,
+    files: apexFiles,
+    symbols,
+    references: preliminaryGraph.references,
+    entryPoints: preliminaryGraph.entryPoints,
+    reachability: preliminaryGraph.reachability,
+    configuredTypeFields: metadata.configuredTypeFields,
+  });
   const graph = buildGraph(
     symbols,
-    [...apexFiles.flatMap((file) => file.references), ...metadata.references],
-    apexFiles.flatMap((file) => file.entryPoints),
-    blockers,
+    [...rawReferences, ...dynamicTypes.references],
+    declaredEntries,
+    dynamicTypes.blockers,
     exposures,
   );
   const inventory = buildInventory(root, files.sourceRoots, apexFiles, files.metadata.length);
@@ -293,12 +309,6 @@ function duplicateSymbolBlockers(symbols: ApexSymbol[]): AnalysisBlocker[] {
         location: first.location,
       };
     });
-}
-
-function isResolvedByRepositoryMetadata(blocker: AnalysisBlocker, configuredTypeFields: ReadonlySet<string>): boolean {
-  return blocker.code === "dynamic-type"
-    && blocker.repositoryMetadataField !== undefined
-    && configuredTypeFields.has(blocker.repositoryMetadataField);
 }
 
 function isTopLevelType(symbol: ApexSymbol): boolean {
