@@ -6,6 +6,8 @@ export function renderMarkdown(report: AnalysisReport): string {
   const classes = report.candidates.filter(isTypeCandidate);
   const members = report.candidates.filter((candidate) => !isTypeCandidate(candidate));
   const blockingCount = report.analysis.blockers.filter((item) => item.blocksClosedWorldConclusion).length;
+  const duplicateDeclarationFindings = report.analysis.findings.filter((item) => item.code === "duplicate-symbol").length;
+  const testParseFindings = report.analysis.findings.filter((item) => item.code === "test-parse-error").length;
   const exactQueryFamilies = report.duplicates.queryFamilies.filter((family) => family.kind === "exact-query").length;
   const selectorFamilies = report.duplicates.queryFamilies.length - exactQueryFamilies;
   const excludedRuntimeQueries = report.duplicates.queryCoverage.unresolvedDynamicQueries.length;
@@ -24,9 +26,13 @@ export function renderMarkdown(report: AnalysisReport): string {
     `- **Duplicate/refactor coverage:** **${formatPercent(report.executive.redundancy.coveredPercent)}** participates in an accepted clone family; **${formatPercent(report.executive.redundancy.duplicatedPercent)}** is repeated occurrence coverage after retaining one representative per family. Coverage is **${report.duplicates.coverage.status}**.`,
     `- **SOQL and domain operations:** ${formatNumber(exactQueryFamilies)} exact-query family finding(s), ${formatNumber(selectorFamilies)} selector-shape family finding(s), ${formatNumber(excludedRuntimeQueries)} dynamic SOQL site(s) excluded from those totals, and ${formatNumber(report.duplicates.dmlFamilies.length)} compatible repeated DML family finding(s).`,
     `- **Flow conversion:** ${formatNumber(report.flowMigration.eligibleTriggers)} eligible, ${formatNumber(report.flowMigration.ineligibleTriggers)} ineligible, ${formatNumber(report.flowMigration.blockedTriggers)} blocked; proven shrinkable/removable Apex is **${formatPercent(report.flowMigration.reclaimablePercent)}** (${formatNumber(report.flowMigration.reclaimableCharacters)} raw characters).`,
-    `- **Reachability certification:** **${report.analysis.status}**${report.analysis.status === "blocked" ? ` (${formatNumber(blockingCount)} exact code location(s))` : ""}.`, "",
+    `- **Reachability certification:** **${report.analysis.status}**${report.analysis.status === "blocked" ? ` (${formatNumber(blockingCount)} exact code location(s))` : ""}.`,
+    ...(report.analysis.findings.length > 0 ? [
+      `- **Repository integrity:** ${formatNumber(duplicateDeclarationFindings)} duplicate declaration group(s), ${formatNumber(testParseFindings)} test-only parse diagnostic(s). These remain review findings and do not block production reachability.`,
+    ] : []), "",
     "Do not add these percentages: source intervals can overlap, and clone coverage is a refactoring measure rather than guaranteed capacity recovery. States are binary or blocked; clone similarity is a measured threshold, not confidence.", "",
     ...(report.analysis.status === "blocked" ? ["## Why certification is blocked", "", ...renderBlockerSummary(report), ""] : []),
+    ...(report.analysis.findings.length > 0 ? ["## Repository integrity findings", "", ...renderIntegrityFindings(report), ""] : []),
     "## Inventory", "",
     `- ${formatNumber(report.inventory.apexFiles)} Apex files; ${formatNumber(report.inventory.productionApexCharacters)} production and ${formatNumber(report.inventory.testApexCharacters)} test characters.`,
     `- ${formatNumber(report.summary.productionReachable)} production-reachable, ${formatNumber(report.summary.testOnlyReachable)} test-only, and ${formatNumber(report.summary.unreachable)} unreachable symbols.`,
@@ -129,7 +135,6 @@ function renderBlockerSummary(report: AnalysisReport): string[] {
     "parse-error": "The Apex parser could not read a source construct, so calls inside that file are not certified.",
     "dynamic-type": "Production code computes a class name for Type.forName(...); the runtime target is not a lexical class reference.",
     "unresolved-reference": "A repository call could not be bound to its declared target.",
-    "duplicate-symbol": "The same top-level Apex component or standalone member signature appears more than once in the analyzed package directories.",
   };
   const grouped = new Map<string, typeof blocking>();
   for (const blocker of blocking) {
@@ -160,6 +165,23 @@ function renderBlockerSummary(report: AnalysisReport): string[] {
     rows.push(`| \`${blocker.code}\` | ${location} | ${escapeCell(blocker.message)} |`);
   }
   if (blocking.length > MARKDOWN_FINDING_LIMIT) rows.push(`\n_${formatNumber(blocking.length - MARKDOWN_FINDING_LIMIT)} additional blocker details are retained in JSON._`);
+  return rows;
+}
+
+function renderIntegrityFindings(report: AnalysisReport): string[] {
+  const rows = [
+    "These findings are deterministic repository cleanup work. Duplicate declarations are analyzed as separate physical symbols and calls are connected to every matching declaration. Test-only parse diagnostics cannot hide production calls.",
+    "",
+    "| Finding | Evidence | Locations |",
+    "|---|---|---|",
+  ];
+  for (const finding of report.analysis.findings.slice(0, MARKDOWN_FINDING_LIMIT)) {
+    const locations = finding.locations.map((location) => `\`${location.path}:${location.line}\``).join("<br>");
+    rows.push(`| \`${finding.code}\` | ${escapeCell(finding.message)} | ${locations} |`);
+  }
+  if (report.analysis.findings.length > MARKDOWN_FINDING_LIMIT) {
+    rows.push(`\n_${formatNumber(report.analysis.findings.length - MARKDOWN_FINDING_LIMIT)} additional integrity findings are retained in JSON._`);
+  }
   return rows;
 }
 

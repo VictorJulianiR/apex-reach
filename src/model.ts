@@ -1,4 +1,4 @@
-export const REPORT_SCHEMA_VERSION = "3.0.0" as const;
+export const REPORT_SCHEMA_VERSION = "4.0.0" as const;
 
 export type SymbolKind = "class" | "interface" | "enum" | "trigger" | "method" | "constructor";
 export type Reachability = "production" | "test-only" | "unreachable";
@@ -69,8 +69,7 @@ export interface AnalysisBlocker {
   code:
     | "dynamic-type"
     | "unresolved-reference"
-    | "parse-error"
-    | "duplicate-symbol";
+    | "parse-error";
   scope: "project" | "symbol" | "reference";
   message: string;
   blocksClosedWorldConclusion: boolean;
@@ -79,6 +78,12 @@ export interface AnalysisBlocker {
   dynamicExpression?: string;
   dynamicReasons?: string[];
   location?: SourceLocation;
+}
+
+export interface AnalysisFinding {
+  code: "duplicate-symbol" | "test-parse-error";
+  message: string;
+  locations: SourceLocation[];
 }
 
 export interface ExposureSignal {
@@ -349,6 +354,7 @@ export interface AnalysisReport {
     assumption: string;
     status: "complete" | "blocked";
     blockers: AnalysisBlocker[];
+    findings: AnalysisFinding[];
   };
   symbols: ApexSymbol[];
   references: ReferenceEdge[];

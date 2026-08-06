@@ -114,9 +114,7 @@ export function buildGraph(
         : [];
   }
   const relevantBlockers = blockers.filter((blocker) =>
-    blocker.code !== "dynamic-type"
-      || blocker.symbolId === undefined
-      || reachability[blocker.symbolId] === "production",
+    blocker.symbolId === undefined || reachability[blocker.symbolId] === "production",
   );
   const candidates = buildCandidates(symbols, reachability, exposures);
   return { references, entryPoints: uniqueEntries, reachability, evidencePaths, candidates, blockers: relevantBlockers, exposures };

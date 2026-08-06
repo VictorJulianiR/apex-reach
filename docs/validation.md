@@ -1,10 +1,10 @@
 # Validation results
 
-Validation was rerun on 6 August 2026 with `apex-reach` 0.4.0. Repository clones and generated reports live under the ignored `validation/` directory so they do not become product dependencies.
+Validation was rerun on 6 August 2026 with `apex-reach` 0.5.0. Repository clones and generated reports live under the ignored `validation/` directory so they do not become product dependencies.
 
 ## Automated fixtures
 
-Eighteen tests exercise the original reachability/installer contract plus:
+Twenty tests exercise the original reachability/installer contract plus:
 
 - trigger-to-handler and internal method reachability;
 - production, test-only, and unreachable classifications;
@@ -16,6 +16,8 @@ Eighteen tests exercise the original reachability/installer contract plus:
 - computed `Type.forName` blocking only when its containing symbol is production-reachable;
 - interprocedural `Type.forName` provenance through SOQL assignment, `getInstance`, `getAll`, nested selectors, and wrapper parameters;
 - conditional runtime overrides remaining blocked even when their default value is versioned Custom Metadata;
+- duplicate declarations receiving unique physical identities and conservative call edges without blocking certification;
+- parse diagnostics confined to `@IsTest` source remaining visible without blocking production reachability;
 - probability-free candidates and exact blocker locations;
 - exclusion of `@isTest` source from the production footprint;
 - Markdown report and Windows installer behavior.
@@ -26,7 +28,7 @@ Eighteen tests exercise the original reachability/installer contract plus:
 - binary Flow eligibility, callout/order blockers, and Git revision capture;
 - `this`, `new LocalType()`, unknown-chain dispatch, and `new Http().send()` collision cases.
 
-Result: 18/18 passed, with TypeScript checking and production build also passing.
+Result: 20/20 passed, with TypeScript checking and production build also passing.
 
 ## trailheadapps/apex-recipes
 

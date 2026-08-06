@@ -32,8 +32,12 @@ The source locations and resolution steps that justify a classification, includi
 _Avoid_: Explanation
 
 **Analysis blocker**:
-A concrete repository construct that prevents the closed-world conclusion from being complete, such as a parse failure, computed type name, unresolved call, or duplicate symbol. It must include a source location when available.
+A concrete production-reachable repository construct that prevents the closed-world conclusion from being complete, such as a production parse failure, computed type name, or unresolved call. It must include a source location when available.
 _Avoid_: Confidence, uncertainty, probability
+
+**Repository integrity finding**:
+A deterministic cleanup condition that does not hide a production call, such as duplicate physical declarations or a parse diagnostic confined to test-only source. Duplicate declarations are resolved conservatively to every matching symbol instead of blocking reachability.
+_Avoid_: Analysis blocker, uncertainty
 
 **Repository universe**:
 All deployable Apex and calling metadata found under every package directory declared by `sfdx-project.json`. External callers not represented in that universe are explicitly out of scope.

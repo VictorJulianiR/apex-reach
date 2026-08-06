@@ -58,6 +58,23 @@ describe("analyzeProject", () => {
     expect(blocker.location?.path).toContain("DynamicLookup.cls");
   });
 
+  it("keeps parser diagnostics in test-only source out of production certification", async () => {
+    const report = await analyzeProject(path.resolve("fixtures/test-parse-error"));
+
+    expect(report.diagnostics).toHaveLength(1);
+    expect(report.diagnostics[0]?.path).toContain("BrokenSyntaxTest.cls");
+    expect(report.analysis.blockers.some((item) => item.code === "parse-error")).toBe(false);
+    expect(report.analysis.status).toBe("complete");
+  });
+
+  it("continues to block when a parser diagnostic can hide production calls", async () => {
+    const report = await analyzeProject(path.resolve("fixtures/production-parse-error"));
+
+    expect(report.analysis.blockers.some((item) => item.code === "parse-error")).toBe(true);
+    expect(report.analysis.findings).toHaveLength(0);
+    expect(report.analysis.status).toBe("blocked");
+  });
+
   it("keeps a conditional runtime override blocked even when the default comes from Custom Metadata", async () => {
     const report = await analyzeProject(path.resolve("fixtures/conditional-dynamic-type"));
     const blocker = report.analysis.blockers.find((item) => item.code === "dynamic-type")!;
@@ -90,19 +107,27 @@ describe("analyzeProject", () => {
     expect(injected?.repositoryMetadataField).toBeUndefined();
   });
 
-  it("reports one duplicate blocker per duplicated top-level Apex component", async () => {
+  it("analyzes duplicate declarations conservatively without blocking unrelated certification", async () => {
     const report = await analyzeProject(path.resolve("fixtures/duplicate-components"));
-    const blockers = report.analysis.blockers.filter((item) => item.code === "duplicate-symbol");
+    const blockerCodes: string[] = report.analysis.blockers.map((item) => item.code);
+    const findings = report.analysis.findings.filter((item) => item.code === "duplicate-symbol");
+    const duplicateClasses = report.symbols.filter((symbol) => symbol.qualifiedName === "ApprovalProcessHandler");
+    const duplicateMethods = report.symbols.filter((symbol) => symbol.qualifiedName === "ApprovalProcessHandler.start()");
 
-    expect(blockers).toHaveLength(2);
-    expect(blockers.some((item) => item.message.includes("ApprovalProcessHandler"))).toBe(true);
-    expect(blockers.some((item) => item.message.includes("ContractTrigger"))).toBe(true);
-    expect(blockers.every((item) => item.message.includes("package-a") && item.message.includes("package-b"))).toBe(true);
+    expect(blockerCodes).not.toContain("duplicate-symbol");
+    expect(findings).toHaveLength(2);
+    expect(findings.some((item) => item.message.includes("ApprovalProcessHandler"))).toBe(true);
+    expect(findings.some((item) => item.message.includes("ContractTrigger"))).toBe(true);
+    expect(report.analysis.status).toBe("complete");
+    expect(new Set(duplicateClasses.map((symbol) => symbol.id)).size).toBe(2);
+    expect(new Set(duplicateMethods.map((symbol) => symbol.id)).size).toBe(2);
+    expect(duplicateMethods.every((symbol) => report.reachability[symbol.id] === "production")).toBe(true);
 
-    const certificationSection = renderMarkdown(report).split("## Inventory", 1)[0]!;
-    expect(certificationSection).toContain("### Exact blockers");
-    expect(certificationSection).toContain("package-a/main/default/classes/ApprovalProcessHandler.cls");
-    expect(certificationSection).toContain("package-b/main/default/classes/ApprovalProcessHandler.cls");
+    const markdown = renderMarkdown(report);
+    expect(markdown).not.toContain("## Why certification is blocked");
+    expect(markdown).toContain("## Repository integrity findings");
+    expect(markdown).toContain("package-a/main/default/classes/ApprovalProcessHandler.cls");
+    expect(markdown).toContain("package-b/main/default/classes/ApprovalProcessHandler.cls");
   });
 
   it("does not treat callable annotations as proof of a production call", async () => {

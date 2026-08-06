@@ -12,13 +12,14 @@ import { readRepositoryRevision } from "./revision.js";
 import {
   REPORT_SCHEMA_VERSION,
   type AnalysisBlocker,
+  type AnalysisFinding,
   type AnalysisOptions,
   type AnalysisReport,
   type ApexSymbol,
   type ExtractedFile,
   type ProjectInventory,
 } from "./model.js";
-import { relativePath } from "./paths.js";
+import { normalizeName, relativePath } from "./paths.js";
 import { TOOL_VERSION } from "./version.js";
 
 /**
@@ -41,16 +42,24 @@ export async function analyzeProject(projectPath: string, options: AnalysisOptio
     symbols,
   );
   const diagnostics = apexFiles.flatMap((file) => file.diagnostics);
+  const productionDiagnostics = apexFiles.filter((file) => !isTestOnlyFile(file)).flatMap((file) => file.diagnostics);
+  const findings: AnalysisFinding[] = [
+    ...duplicateSymbolFindings(symbols),
+    ...apexFiles.filter(isTestOnlyFile).flatMap((file) => file.diagnostics.map((diagnostic) => ({
+      code: "test-parse-error" as const,
+      message: `Test-only parse diagnostic: ${diagnostic.message}`,
+      locations: [{ path: diagnostic.path, line: diagnostic.line, column: diagnostic.column }],
+    }))),
+  ];
   const blockers: AnalysisBlocker[] = [
     ...apexFiles.flatMap((file) => file.blockers),
-    ...diagnostics.map((diagnostic): AnalysisBlocker => ({
+    ...productionDiagnostics.map((diagnostic): AnalysisBlocker => ({
       code: "parse-error",
       scope: "project",
       message: diagnostic.message,
       blocksClosedWorldConclusion: true,
       location: { path: diagnostic.path, line: diagnostic.line, column: diagnostic.column },
     })),
-    ...duplicateSymbolBlockers(symbols),
   ];
   const exposures = apexFiles.flatMap((file) => file.exposures);
   const declaredEntries = apexFiles.flatMap((file) => file.entryPoints);
@@ -135,6 +144,7 @@ export async function analyzeProject(projectPath: string, options: AnalysisOptio
       assumption: "All deployable Apex and metadata that define production calls are present in the analyzed SFDX package directories; callers outside the repository are outside this result.",
       status: graph.blockers.some((blocker) => blocker.blocksClosedWorldConclusion) ? "blocked" : "complete",
       blockers: graph.blockers,
+      findings,
     },
     symbols: symbols.sort(compareSymbols),
     references: reportReferences.sort(compareLocations),
@@ -277,38 +287,53 @@ async function mapLimit<T, R>(items: T[], limit: number, task: (item: T) => Prom
   return result;
 }
 
-function duplicateSymbolBlockers(symbols: ApexSymbol[]): AnalysisBlocker[] {
+function duplicateSymbolFindings(symbols: ApexSymbol[]): AnalysisFinding[] {
+  const byId = new Map(symbols.map((symbol) => [symbol.id, symbol]));
   const grouped = new Map<string, ApexSymbol[]>();
   for (const symbol of symbols) {
-    const values = grouped.get(symbol.id);
+    const key = logicalSymbolKey(symbol, byId);
+    const values = grouped.get(key);
     if (values) values.push(symbol);
-    else grouped.set(symbol.id, [symbol]);
+    else grouped.set(key, [symbol]);
   }
   const duplicateGroups = [...grouped.values()].filter((values) => values.length > 1);
-  const duplicatedTopLevelIds = new Set(
+  const duplicatedTopLevelNames = new Set(
     duplicateGroups
       .filter((values) => values.every((symbol) => symbol.ownerId === undefined && isTopLevelType(symbol)))
-      .map((values) => values[0]!.id),
+      .map((values) => normalizeName(values[0]!.qualifiedName)),
   );
   return duplicateGroups
     .filter((values) => {
       const first = values[0]!;
-      return duplicatedTopLevelIds.has(first.id) || !first.ownerId || !duplicatedTopLevelIds.has(first.ownerId);
+      const owner = first.ownerId ? byId.get(first.ownerId) : undefined;
+      return duplicatedTopLevelNames.has(normalizeName(first.qualifiedName))
+        || !owner
+        || !duplicatedTopLevelNames.has(normalizeName(owner.qualifiedName));
     })
     .map((values) => {
       const first = values[0]!;
       const locations = values.map((value) => `${value.location.path}:${value.location.line}`).join(", ");
-      const topLevel = duplicatedTopLevelIds.has(first.id);
+      const topLevel = !first.ownerId && isTopLevelType(first);
       return {
         code: "duplicate-symbol" as const,
-        scope: "project" as const,
         message: topLevel
-          ? `Duplicate top-level Apex component ${first.qualifiedName} appears at ${locations}. Member collisions are represented by this component-level blocker.`
+          ? `Duplicate top-level Apex component ${first.qualifiedName} appears at ${locations}. Calls are conservatively connected to every declaration.`
           : `Duplicate symbol ${first.qualifiedName} appears at ${locations}.`,
-        blocksClosedWorldConclusion: true,
-        location: first.location,
+        locations: values.map((value) => value.location),
       };
     });
+}
+
+function logicalSymbolKey(symbol: ApexSymbol, byId: Map<string, ApexSymbol>): string {
+  if (!symbol.ownerId) return `type:${normalizeName(symbol.qualifiedName)}`;
+  const owner = byId.get(symbol.ownerId);
+  const parameters = (symbol.parameterTypes ?? []).map(normalizeName).join(",");
+  return `${symbol.kind}:${normalizeName(owner?.qualifiedName ?? "unknown")}.${normalizeName(symbol.name)}(${parameters})`;
+}
+
+function isTestOnlyFile(file: ExtractedFile): boolean {
+  const topLevel = file.symbols.filter((symbol) => !symbol.ownerId);
+  return topLevel.length > 0 && topLevel.every((symbol) => symbol.testCode);
 }
 
 function isTopLevelType(symbol: ApexSymbol): boolean {

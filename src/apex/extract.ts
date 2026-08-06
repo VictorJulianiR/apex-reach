@@ -628,8 +628,9 @@ class ExtractionListener extends ApexParserBaseListener {
     const parent = this.currentType()?.symbol;
     const qualifiedName = parent ? `${parent.qualifiedName}.${name}` : name;
     const annotations = annotationsOf(modifiers);
+    const location = this.location(ctx);
     const symbol: ApexSymbol = {
-      id: `type:${normalizeName(qualifiedName)}`,
+      id: symbolIdentity("type", qualifiedName, this.filePath, location),
       kind,
       name,
       qualifiedName,
@@ -639,7 +640,7 @@ class ExtractionListener extends ApexParserBaseListener {
       interfaces,
       ...(superclass ? { superclass } : {}),
       testCode: kind !== "trigger" && (parent?.testCode === true || annotations.includes("istest")),
-      location: this.location(ctx),
+      location,
       sourceCharacters: spanLength(ctx),
       sourceBytes: this.spanBytes(ctx),
     };
@@ -657,11 +658,13 @@ class ExtractionListener extends ApexParserBaseListener {
   ): ApexSymbol {
     const annotations = annotationsOf(modifiers);
     const signature = parameterTypes.map(normalizeName).join(",");
+    const qualifiedName = `${owner.qualifiedName}.${name}(${parameterTypes.join(", ")})`;
+    const location = this.location(ctx);
     return {
-      id: `${kind}:${normalizeName(owner.qualifiedName)}.${normalizeName(name)}(${signature})`,
+      id: symbolIdentity(kind, `${owner.qualifiedName}.${name}(${signature})`, this.filePath, location),
       kind,
       name,
-      qualifiedName: `${owner.qualifiedName}.${name}(${parameterTypes.join(", ")})`,
+      qualifiedName,
       ownerId: owner.id,
       arity: parameterTypes.length,
       parameterTypes,
@@ -670,7 +673,7 @@ class ExtractionListener extends ApexParserBaseListener {
       annotations,
       interfaces: [],
       testCode: owner.testCode || annotations.includes("istest") || normalizeModifiers(modifiers).includes("testmethod"),
-      location: this.location(ctx),
+      location,
       sourceCharacters: spanLength(ctx),
       sourceBytes: this.spanBytes(ctx),
     };
@@ -929,6 +932,10 @@ function newBehavior(symbolId: string): ExecutableBehavior {
     dynamicQueryGaps: [],
     dml: [],
   };
+}
+
+function symbolIdentity(kind: string, logicalName: string, filePath: string, location: SourceLocation): string {
+  return `${kind}:${normalizeName(logicalName)}@${normalizeName(filePath)}:${location.line}:${location.column}`;
 }
 
 function foldApexString(expression: string, resolveIdentifier: (identifier: string) => string | undefined = () => undefined): string | undefined {
