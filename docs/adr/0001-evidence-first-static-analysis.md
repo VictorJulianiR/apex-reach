@@ -14,6 +14,8 @@ Build a deterministic local pipeline around an Apex parse tree and a repository-
 
 Treat triggers and concrete Apex/metadata references as entry-point evidence. Annotations, visibility, webservices, and declared platform interfaces are exposure signals, not evidence that a call exists. Scan every text metadata file, using format-aware resolution for supported formats and conservative exact-name resolution for the rest. Keep unresolved and dynamic references as explicit analysis blockers with locations instead of turning them into candidate confidence.
 
+A `Type.forName` value read from Custom Metadata is resolved only when the Apex variable is initialized by SOQL from a concrete `__mdt` type and the referenced field is materialized by versioned Custom Metadata records. Those record values already create exact metadata-to-type entry points. A typed parameter or an unversioned field is insufficient and remains blocked.
+
 ## Consequences
 
 - Analysis is reproducible, reviewable, and safe to run entirely on a client machine.

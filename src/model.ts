@@ -73,6 +73,7 @@ export interface AnalysisBlocker {
   message: string;
   blocksClosedWorldConclusion: boolean;
   symbolId?: string;
+  repositoryMetadataField?: string;
   location?: SourceLocation;
 }
 

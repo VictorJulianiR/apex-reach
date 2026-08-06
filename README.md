@@ -19,6 +19,7 @@ It does **not** send source code to an LLM or require access to a Salesforce org
 - compatible DML/domain-operation families that preserve transaction and access-mode differences;
 - binary trigger-to-Flow eligibility with explicit order, bulk, transaction, recursion, security, callout, async, and coverage blockers;
 - analyzed Git branch, commit, and dirty state in every report.
+- repository-backed `Type.forName` resolution when a typed `__mdt` SOQL result reads a class-name field whose Custom Metadata records are versioned in the project;
 
 The executive report keeps three lanes separate: **certified repository-unreachable Apex**, **duplicate/refactor coverage**, and **Apex proven removable by Flow conversion**. They are not added together because source intervals can overlap, and duplicate coverage is not guaranteed savings after abstraction overhead.
 
@@ -27,6 +28,8 @@ The primary result is a deterministic **closed-world repository classification**
 If parsing, dynamic type construction, duplicate symbols, or unresolved calls prevent a complete reachability conclusion, the report labels deprecation candidates **not certified**, groups every blocker by concrete cause, and lists its exact file and line. Nothing is called safe while certification is blocked. Dynamic SOQL exclusions do not invalidate resolved query-family findings: the Markdown reports resolved families and excluded call sites separately. A blocker is never converted into a confidence score. Clone similarity is a reproducible threshold measurement, not probability.
 
 When the same top-level class or trigger exists in multiple package directories, it produces one component-level blocker. Its methods are not counted again as independent blockers, and every duplicate path is printed in the certification section.
+
+A computed `Type.forName` remains blocking unless its source is proven. For Custom Metadata, proof requires a variable initialized by SOQL from a concrete `__mdt` type plus at least one versioned record containing the referenced field. Merely having a `List<...__mdt>` parameter is not enough.
 
 The Markdown report is intentionally operational: it shows at most 25 findings per large analysis table and keeps the complete evidence set in JSON.
 

@@ -11,15 +11,20 @@ interface MetadataDocument extends MetadataFileInput {
   source: string;
 }
 
+export interface MetadataAnalysis {
+  references: RawReference[];
+  configuredTypeFields: ReadonlySet<string>;
+}
+
 /**
  * Scans every discovered text metadata file. Format-aware extractors provide exact
  * method bindings; the generic pass conservatively catches Apex type names stored
  * in configuration formats the analyzer does not need to understand.
  */
-export async function extractMetadataReferences(
+export async function analyzeMetadata(
   files: MetadataFileInput[],
   symbols: ApexSymbol[],
-): Promise<RawReference[]> {
+): Promise<MetadataAnalysis> {
   const documents = await mapLimit(files, 16, async (file): Promise<MetadataDocument> => ({
     ...file,
     source: await readFile(file.absolutePath, "utf8"),
@@ -34,7 +39,26 @@ export async function extractMetadataReferences(
     ...extractFormatAware(document),
   ]);
   references.push(...extractAuraBundleCalls(documents));
-  return dedupe(references);
+  return {
+    references: dedupe(references),
+    configuredTypeFields: extractConfiguredTypeFields(documents),
+  };
+}
+
+function extractConfiguredTypeFields(documents: MetadataDocument[]): ReadonlySet<string> {
+  const fields = new Set<string>();
+  for (const document of documents) {
+    const portable = document.reportPath.replace(/\\/g, "/");
+    const recordType = /\/customMetadata\/([^/.]+)\.[^/]+\.md-meta\.xml$/i.exec(portable)?.[1];
+    if (!recordType) continue;
+    const metadataType = /__mdt$/i.test(recordType) ? recordType : `${recordType}__mdt`;
+    for (const values of document.source.matchAll(/<values>([\s\S]*?)<\/values>/gi)) {
+      const field = /<field>\s*([A-Za-z_]\w*__c)\s*<\/field>/i.exec(values[1] ?? "")?.[1];
+      const hasValue = /<value\b[^>]*>[\s\S]*?<\/value>/i.test(values[1] ?? "");
+      if (field && hasValue) fields.add(normalizeName(`${metadataType}.${field}`));
+    }
+  }
+  return fields;
 }
 
 function extractFormatAware(document: MetadataDocument): RawReference[] {

@@ -105,6 +105,7 @@ interface Scope {
   symbol: ApexSymbol;
   variables: Map<string, string>;
   strings: Map<string, string>;
+  repositoryMetadataVariables: Map<string, string>;
 }
 
 class DiagnosticListener extends ApexErrorListener {
@@ -171,7 +172,7 @@ class ExtractionListener extends ApexParserBaseListener {
     const name = ctx.id(0).getText();
     const symbol = this.makeTypeSymbol("trigger", name, ctx, [], []);
     this.symbols.push(symbol);
-    const scope = { symbol, variables: new Map<string, string>(), strings: new Map<string, string>() };
+    const scope = { symbol, variables: new Map<string, string>(), strings: new Map<string, string>(), repositoryMetadataVariables: new Map<string, string>() };
     this.typeStack.push(scope);
     this.executableStack.push(scope);
     this.behaviorStack.push(newBehavior(symbol.id));
@@ -190,7 +191,7 @@ class ExtractionListener extends ApexParserBaseListener {
     const interfaces = ctx.typeList()?.typeRef_list().map((type) => type.getText()) ?? [];
     const symbol = this.makeTypeSymbol("class", ctx.id().getText(), ctx, modifiers, interfaces, ctx.typeRef()?.getText());
     this.symbols.push(symbol);
-    this.typeStack.push({ symbol, variables: new Map<string, string>(), strings: new Map<string, string>() });
+    this.typeStack.push({ symbol, variables: new Map<string, string>(), strings: new Map<string, string>(), repositoryMetadataVariables: new Map<string, string>() });
     if (annotations.includes("restresource")) {
       this.addExposure(symbol, "annotation", "@RestResource class can be called outside the repository");
     }
@@ -206,7 +207,7 @@ class ExtractionListener extends ApexParserBaseListener {
     const interfaces = ctx.typeList()?.typeRef_list().map((type) => type.getText()) ?? [];
     const symbol = this.makeTypeSymbol("interface", ctx.id().getText(), ctx, modifiers, interfaces);
     this.symbols.push(symbol);
-    this.typeStack.push({ symbol, variables: new Map<string, string>(), strings: new Map<string, string>() });
+    this.typeStack.push({ symbol, variables: new Map<string, string>(), strings: new Map<string, string>(), repositoryMetadataVariables: new Map<string, string>() });
     this.addVisibilityExposure(symbol);
   }
 
@@ -217,7 +218,7 @@ class ExtractionListener extends ApexParserBaseListener {
   enterEnumDeclaration(ctx: EnumDeclarationContext): void {
     const symbol = this.makeTypeSymbol("enum", ctx.id().getText(), ctx, modifiersOf(ctx), []);
     this.symbols.push(symbol);
-    this.typeStack.push({ symbol, variables: new Map<string, string>(), strings: new Map<string, string>() });
+    this.typeStack.push({ symbol, variables: new Map<string, string>(), strings: new Map<string, string>(), repositoryMetadataVariables: new Map<string, string>() });
     this.addVisibilityExposure(symbol);
   }
 
@@ -232,7 +233,7 @@ class ExtractionListener extends ApexParserBaseListener {
     const parameterTypes = parameterTypesOf(ctx.formalParameters());
     const symbol = this.makeMemberSymbol("method", owner.symbol, ctx.id().getText(), parameterTypes, ctx, modifiers, parameterNamesOf(ctx.formalParameters()));
     this.symbols.push(symbol);
-    this.executableStack.push({ symbol, variables: new Map<string, string>(), strings: new Map<string, string>() });
+    this.executableStack.push({ symbol, variables: new Map<string, string>(), strings: new Map<string, string>(), repositoryMetadataVariables: new Map<string, string>() });
     this.behaviorStack.push(newBehavior(symbol.id));
     this.classifyMethodEntry(symbol, owner.symbol);
     this.addVisibilityExposure(symbol);
@@ -259,7 +260,7 @@ class ExtractionListener extends ApexParserBaseListener {
     const parameterTypes = parameterTypesOf(ctx.formalParameters());
     const symbol = this.makeMemberSymbol("constructor", owner.symbol, owner.symbol.name, parameterTypes, ctx, modifiersOf(ctx), parameterNamesOf(ctx.formalParameters()));
     this.symbols.push(symbol);
-    this.executableStack.push({ symbol, variables: new Map<string, string>(), strings: new Map<string, string>() });
+    this.executableStack.push({ symbol, variables: new Map<string, string>(), strings: new Map<string, string>(), repositoryMetadataVariables: new Map<string, string>() });
     this.behaviorStack.push(newBehavior(symbol.id));
     this.addVisibilityExposure(symbol);
   }
@@ -300,6 +301,10 @@ class ExtractionListener extends ApexParserBaseListener {
       if (normalizeName(type) === "string" && variable.ASSIGN()) {
         const value = foldApexString(variable.expression().getText(), (identifier) => this.resolveStringValue(identifier));
         if (value !== undefined) scope.strings.set(name, value);
+      }
+      if (variable.ASSIGN()) {
+        const metadataType = repositoryMetadataQueryType(type, variable.expression().getText());
+        if (metadataType) scope.repositoryMetadataVariables.set(name, metadataType);
       }
     }
   }
@@ -475,12 +480,14 @@ class ExtractionListener extends ApexParserBaseListener {
         });
       } else {
         const sourceId = this.currentSourceId();
+        const repositoryMetadataField = this.resolveRepositoryMetadataField(argument);
         this.blockers.push({
           code: "dynamic-type",
           scope: "reference",
           message: `Type.forName(${argument}) depends on a runtime value and can reference a class that has no lexical caller.`,
           blocksClosedWorldConclusion: true,
           ...(sourceId ? { symbolId: sourceId } : {}),
+          ...(repositoryMetadataField ? { repositoryMetadataField } : {}),
           location: this.location(ctx),
         });
       }
@@ -732,6 +739,16 @@ class ExtractionListener extends ApexParserBaseListener {
     this.currentType()?.strings.delete(simple);
   }
 
+  private resolveRepositoryMetadataField(expression: string): string | undefined {
+    const compact = expression.replace(/\s+/g, "");
+    const baseVariable = /^([A-Za-z_]\w*)/.exec(compact)?.[1];
+    const field = /\.([A-Za-z_]\w*__c)$/.exec(compact)?.[1];
+    if (!baseVariable || !field) return undefined;
+    const metadataType = this.currentExecutable()?.repositoryMetadataVariables.get(normalizeName(baseVariable));
+    if (!metadataType) return undefined;
+    return normalizeName(`${metadataType}.${field}`);
+  }
+
   private currentType(): Scope | undefined {
     return this.typeStack.at(-1);
   }
@@ -908,6 +925,15 @@ function enclosesWholeExpression(expression: string): boolean {
 function isFinalField(ctx: FieldDeclarationContext): boolean {
   const declaration = ctx.parentCtx?.parentCtx as ContextLike & { modifier_list?: () => Array<{ getText(): string }> };
   return declaration.modifier_list?.().some((modifier) => normalizeName(modifier.getText()) === "final") ?? false;
+}
+
+function repositoryMetadataQueryType(declaredType: string, initializer: string): string | undefined {
+  const collectionMember = /^(?:List|Set)<(.+)>$/i.exec(declaredType)?.[1];
+  const metadataType = simpleTypeName(collectionMember ?? declaredType);
+  if (!/__mdt$/i.test(metadataType)) return undefined;
+  const normalizedInitializer = normalizeName(initializer);
+  if (!normalizedInitializer.startsWith("[select") || !normalizedInitializer.includes(`from${normalizeName(metadataType)}`)) return undefined;
+  return metadataType;
 }
 
 function parseDynamicSoql(query: string): Omit<SoqlObservation, "symbolId" | "dynamic" | "location" | "securityMode" | "sharingContext" | "aggregate" | "locking"> | undefined {

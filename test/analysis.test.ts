@@ -1,5 +1,6 @@
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { extractApexFile } from "../src/apex/extract.js";
 import { analyzeProject } from "../src/analyze.js";
 import { renderMarkdown } from "../src/report.js";
 
@@ -55,6 +56,20 @@ describe("analyzeProject", () => {
     expect(report.analysis.status).toBe("blocked");
     expect(blocker.symbolId).toContain("dynamiclookup.touch");
     expect(blocker.location?.path).toContain("DynamicLookup.cls");
+  });
+
+  it("resolves a computed type lookup from repository Custom Metadata values", async () => {
+    const report = await analyzeProject(path.resolve("fixtures/metadata-dynamic-type"));
+    const configured = report.symbols.find((symbol) => symbol.qualifiedName === "ConfiguredService")!;
+
+    expect(report.analysis.blockers.some((item) => item.code === "dynamic-type")).toBe(false);
+    expect(report.reachability[configured.id]).toBe("production");
+    expect(report.analysis.status).toBe("complete");
+
+    const classPath = path.resolve("fixtures/metadata-dynamic-type/force-app/main/default/classes/MetadataTypeResolver.cls");
+    const extracted = await extractApexFile(classPath, "force-app/main/default/classes/MetadataTypeResolver.cls");
+    const injected = extracted.blockers.find((item) => item.symbolId?.includes("runinjectedservice"));
+    expect(injected?.repositoryMetadataField).toBeUndefined();
   });
 
   it("reports one duplicate blocker per duplicated top-level Apex component", async () => {

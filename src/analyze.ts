@@ -3,7 +3,7 @@ import path from "node:path";
 import { extractApexFile } from "./apex/extract.js";
 import { discoverProject } from "./discovery.js";
 import { buildGraph } from "./graph.js";
-import { extractMetadataReferences } from "./metadata.js";
+import { analyzeMetadata } from "./metadata.js";
 import { analyzeDuplicates } from "./quality/duplicates.js";
 import { analyzeFlowMigration } from "./quality/flow.js";
 import { inspectRecordAutomation } from "./quality/automation.js";
@@ -19,7 +19,7 @@ import {
 } from "./model.js";
 import { relativePath } from "./paths.js";
 
-const TOOL_VERSION = "0.3.2";
+const TOOL_VERSION = "0.3.3";
 
 /**
  * Stable external seam for the analyzer. It performs no writes and requires no Salesforce org.
@@ -36,13 +36,14 @@ export async function analyzeProject(projectPath: string, options: AnalysisOptio
     extractApexFile(absolutePath, relativePath(root, absolutePath)),
   );
   const symbols = apexFiles.flatMap((file) => file.symbols);
-  const metadataReferences = await extractMetadataReferences(
+  const metadata = await analyzeMetadata(
     files.metadata.map((absolutePath) => ({ absolutePath, reportPath: relativePath(root, absolutePath) })),
     symbols,
   );
   const diagnostics = apexFiles.flatMap((file) => file.diagnostics);
   const blockers: AnalysisBlocker[] = [
-    ...apexFiles.flatMap((file) => file.blockers),
+    ...apexFiles.flatMap((file) => file.blockers)
+      .filter((blocker) => !isResolvedByRepositoryMetadata(blocker, metadata.configuredTypeFields)),
     ...diagnostics.map((diagnostic): AnalysisBlocker => ({
       code: "parse-error",
       scope: "project",
@@ -56,7 +57,7 @@ export async function analyzeProject(projectPath: string, options: AnalysisOptio
 
   const graph = buildGraph(
     symbols,
-    [...apexFiles.flatMap((file) => file.references), ...metadataReferences],
+    [...apexFiles.flatMap((file) => file.references), ...metadata.references],
     apexFiles.flatMap((file) => file.entryPoints),
     blockers,
     exposures,
@@ -292,6 +293,12 @@ function duplicateSymbolBlockers(symbols: ApexSymbol[]): AnalysisBlocker[] {
         location: first.location,
       };
     });
+}
+
+function isResolvedByRepositoryMetadata(blocker: AnalysisBlocker, configuredTypeFields: ReadonlySet<string>): boolean {
+  return blocker.code === "dynamic-type"
+    && blocker.repositoryMetadataField !== undefined
+    && configuredTypeFields.has(blocker.repositoryMetadataField);
 }
 
 function isTopLevelType(symbol: ApexSymbol): boolean {
