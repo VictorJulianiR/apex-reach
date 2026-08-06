@@ -73,6 +73,9 @@ describe("analyzeProject", () => {
     expect(report.analysis.blockers.some((item) => item.code === "parse-error")).toBe(true);
     expect(report.analysis.findings).toHaveLength(0);
     expect(report.analysis.status).toBe("blocked");
+    expect(report.topLevelClassNameAudit.productionClasses).toBe(1);
+    expect(report.topLevelClassNameAudit.unreferencedProductionClasses).toBe(1);
+    expect(report.topLevelClassNameAudit.entries[0]?.name).toBe("BrokenProduction");
   });
 
   it("keeps a conditional runtime override blocked even when the default comes from Custom Metadata", async () => {
@@ -176,16 +179,31 @@ describe("analyzeProject", () => {
     const markdown = renderMarkdown(report);
     expect(markdown).toContain("# Apex capacity recovery analysis");
     expect(markdown).toContain("## Leadership view");
-    expect(markdown).toContain("Deprecation candidates - not certified");
-    expect(markdown).toContain("## Why certification is blocked");
+    expect(markdown).toContain("Git-unreferenced production classes");
+    expect(markdown).toContain("## AST follow-up items");
     expect(markdown).not.toContain("Safe deprecation");
     expect(report.executive.deprecationCandidatePercent).toBeGreaterThan(0);
     expect(report.executive.retainedPercent + report.executive.deprecationCandidatePercent).toBe(100);
     expect(report.executive.redundancy.status).toBe("measured");
     expect(markdown).toContain("UnusedPrivate");
     expect(markdown).toContain("Deterministic closed-world result");
+    expect(markdown).toContain("Filename reference audit");
     expect(markdown).toContain("Duplicate clone families");
     expect(markdown).toContain("Trigger-to-Flow conversion");
     expect(markdown).not.toMatch(/\b(high|medium|low)[ -]confidence\b/i);
+  });
+
+  it("keeps filename reference audit independent from test callers and parser diagnostics", async () => {
+    const report = await analyzeProject(path.resolve("fixtures/test-parse-error"));
+    const live = report.topLevelClassNameAudit.entries.find((entry) => entry.name === "LiveHandler")!;
+    const brokenTest = report.topLevelClassNameAudit.entries.find((entry) => entry.name === "BrokenSyntaxTest")!;
+
+    expect(report.analysis.status).toBe("complete");
+    expect(report.topLevelClassNameAudit.productionClasses).toBe(1);
+    expect(report.topLevelClassNameAudit.testClasses).toBe(1);
+    expect(live.referencedByName).toBe(true);
+    expect(live.references.some((reference) => reference.path.includes("RootTrigger.trigger"))).toBe(true);
+    expect(brokenTest.testCode).toBe(true);
+    expect(report.topLevelClassNameAudit.unreferencedProductionClasses).toBe(0);
   });
 });

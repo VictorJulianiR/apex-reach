@@ -1,4 +1,4 @@
-export const REPORT_SCHEMA_VERSION = "4.0.0" as const;
+export const REPORT_SCHEMA_VERSION = "4.1.0" as const;
 
 export type SymbolKind = "class" | "interface" | "enum" | "trigger" | "method" | "constructor";
 export type Reachability = "production" | "test-only" | "unreachable";
@@ -103,6 +103,36 @@ export interface RecoveryCandidate {
   reasons: string[];
   exposures: string[];
   location: SourceLocation;
+}
+
+export interface NameReferenceOccurrence {
+  path: string;
+  line: number;
+  column: number;
+  kind: "apex-static-member" | "apex-constructor" | "apex-type-literal" | "metadata";
+  detail: string;
+}
+
+export interface TopLevelClassNameAuditEntry {
+  name: string;
+  path: string;
+  testCode: boolean;
+  sourceCharacters: number;
+  sourceBytes: number;
+  referencedByName: boolean;
+  referenceCount: number;
+  references: NameReferenceOccurrence[];
+}
+
+export interface TopLevelClassNameAudit {
+  productionClasses: number;
+  testClasses: number;
+  referencedProductionClasses: number;
+  unreferencedProductionClasses: number;
+  unreferencedProductionCharacters: number;
+  unreferencedProductionPercent: number;
+  referencePatterns: string[];
+  entries: TopLevelClassNameAuditEntry[];
 }
 
 export interface ParseDiagnostic {
@@ -345,6 +375,7 @@ export interface AnalysisReport {
   generatedAt: string;
   inventory: ProjectInventory;
   summary: AnalysisSummary;
+  topLevelClassNameAudit: TopLevelClassNameAudit;
   executive: ExecutiveWasteSummary;
   revision: RepositoryRevision;
   duplicates: DuplicateAnalysis;

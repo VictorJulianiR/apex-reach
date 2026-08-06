@@ -5,6 +5,7 @@ import { discoverProject } from "./discovery.js";
 import { resolveRepositoryDynamicTypes } from "./dynamic-types.js";
 import { buildGraph } from "./graph.js";
 import { analyzeMetadata } from "./metadata.js";
+import { auditTopLevelClassNames } from "./name-audit.js";
 import { analyzeDuplicates } from "./quality/duplicates.js";
 import { analyzeFlowMigration } from "./quality/flow.js";
 import { inspectRecordAutomation } from "./quality/automation.js";
@@ -88,6 +89,7 @@ export async function analyzeProject(projectPath: string, options: AnalysisOptio
     exposures,
   );
   const inventory = buildInventory(root, files.sourceRoots, apexFiles, files.metadata.length);
+  const topLevelClassNameAudit = auditTopLevelClassNames(apexFiles, metadata.references, inventory.productionApexCharacters);
   const summary = {
     symbols: symbols.length,
     classes: symbols.filter((symbol) => symbol.kind === "class").length,
@@ -135,6 +137,7 @@ export async function analyzeProject(projectPath: string, options: AnalysisOptio
     generatedAt: new Date().toISOString(),
     inventory,
     summary,
+    topLevelClassNameAudit,
     executive,
     revision: await revisionPromise,
     duplicates,

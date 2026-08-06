@@ -23,6 +23,10 @@ _Avoid_: Used symbol
 A non-test symbol for which the analysis found no path from a concrete production code or metadata entry point in the declared repository universe.
 _Avoid_: Dead code, unused code
 
+**Git-unreferenced production class**:
+A production `.cls` file whose filename class is not referenced by production Git evidence: `ClassName.member`, `new ClassName(...)`, literal `Type.forName('ClassName')`, or a supported metadata binding. Test classes and test callers are excluded. This audit does not depend on the Apex parser.
+_Avoid_: Guess, probability
+
 **Exposure**:
 Evidence that a symbol can be invoked through an annotation, visibility modifier, webservice, or platform callback. Exposure is not a call and never changes repository reachability by itself.
 _Avoid_: Entry point, probability
@@ -34,6 +38,10 @@ _Avoid_: Explanation
 **Analysis blocker**:
 A concrete production-reachable repository construct that prevents the closed-world conclusion from being complete, such as a production parse failure, computed type name, or unresolved call. It must include a source location when available.
 _Avoid_: Confidence, uncertainty, probability
+
+**AST follow-up item**:
+Markdown-facing name for an analysis blocker. Use this phrasing in executive reports so the deterministic Git-unreferenced class audit remains the lead result.
+_Avoid_: Maybe, low confidence
 
 **Repository integrity finding**:
 A deterministic cleanup condition that does not hide a production call, such as duplicate physical declarations or a parse diagnostic confined to test-only source. Duplicate declarations are resolved conservatively to every matching symbol instead of blocking reachability.

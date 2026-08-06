@@ -54,7 +54,7 @@ import type {
   SourceLocation,
   SymbolKind,
 } from "../model.js";
-import { normalizeName, simpleTypeName } from "../paths.js";
+import { normalizeName, portablePath, simpleTypeName } from "../paths.js";
 
 const PLATFORM_METHOD_ANNOTATIONS = new Set([
   "auraenabled",
@@ -935,7 +935,7 @@ function newBehavior(symbolId: string): ExecutableBehavior {
 }
 
 function symbolIdentity(kind: string, logicalName: string, filePath: string, location: SourceLocation): string {
-  return `${kind}:${normalizeName(logicalName)}@${normalizeName(filePath)}:${location.line}:${location.column}`;
+  return `${kind}:${normalizeName(logicalName)}@${portablePath(filePath)}:${location.line}:${location.column}`;
 }
 
 function foldApexString(expression: string, resolveIdentifier: (identifier: string) => string | undefined = () => undefined): string | undefined {

@@ -20,18 +20,20 @@ export function renderMarkdown(report: AnalysisReport): string {
     `Analyzed revision: **${revision}**.`, "",
     "> Deterministic closed-world result: all deployable Apex and calling metadata are assumed to be present in the analyzed SFDX package directories.", "",
     "## Leadership view", "",
+    `- **Git-unreferenced production classes:** **${formatPercent(report.topLevelClassNameAudit.unreferencedProductionPercent)}** of production Apex ` +
+      `(${formatNumber(report.topLevelClassNameAudit.unreferencedProductionCharacters)} raw characters) is in top-level \`.cls\` files with no production usage found in Git. Test classes and test callers are excluded.`,
     report.analysis.status === "complete"
-      ? `- **Certified repository-unreachable Apex:** **${formatPercent(report.executive.deprecationCandidatePercent)}** of production Apex (${formatNumber(report.executive.deprecationCandidateCharacters)} raw characters).`
-      : `- **Deprecation candidates - not certified:** **${formatPercent(report.executive.deprecationCandidatePercent)}** of production Apex (${formatNumber(report.executive.deprecationCandidateCharacters)} raw characters). Do not delete until the ${formatNumber(blockingCount)} reachability blocker(s) below are resolved.`,
+      ? `- **AST path audit:** complete; **${formatPercent(report.executive.deprecationCandidatePercent)}** of production Apex is also proven unreachable by the full call graph.`
+      : `- **AST path audit:** ${formatNumber(blockingCount)} technical follow-up item(s). The Git-unreferenced number above remains deterministic; the AST detail only affects stronger delete-batch certification.`,
     `- **Duplicate/refactor coverage:** **${formatPercent(report.executive.redundancy.coveredPercent)}** participates in an accepted clone family; **${formatPercent(report.executive.redundancy.duplicatedPercent)}** is repeated occurrence coverage after retaining one representative per family. Coverage is **${report.duplicates.coverage.status}**.`,
     `- **SOQL and domain operations:** ${formatNumber(exactQueryFamilies)} exact-query family finding(s), ${formatNumber(selectorFamilies)} selector-shape family finding(s), ${formatNumber(excludedRuntimeQueries)} dynamic SOQL site(s) excluded from those totals, and ${formatNumber(report.duplicates.dmlFamilies.length)} compatible repeated DML family finding(s).`,
-    `- **Flow conversion:** ${formatNumber(report.flowMigration.eligibleTriggers)} eligible, ${formatNumber(report.flowMigration.ineligibleTriggers)} ineligible, ${formatNumber(report.flowMigration.blockedTriggers)} blocked; proven shrinkable/removable Apex is **${formatPercent(report.flowMigration.reclaimablePercent)}** (${formatNumber(report.flowMigration.reclaimableCharacters)} raw characters).`,
-    `- **Reachability certification:** **${report.analysis.status}**${report.analysis.status === "blocked" ? ` (${formatNumber(blockingCount)} exact code location(s))` : ""}.`,
+    `- **Flow conversion:** ${formatNumber(report.flowMigration.eligibleTriggers)} eligible, ${formatNumber(report.flowMigration.ineligibleTriggers)} ineligible, ${formatNumber(report.flowMigration.blockedTriggers)} need technical review; proven shrinkable/removable Apex is **${formatPercent(report.flowMigration.reclaimablePercent)}** (${formatNumber(report.flowMigration.reclaimableCharacters)} raw characters).`,
+    `- **Call graph status:** **${report.analysis.status === "complete" ? "complete" : "needs technical follow-up"}**${report.analysis.status === "blocked" ? ` (${formatNumber(blockingCount)} exact code location(s))` : ""}.`,
     ...(report.analysis.findings.length > 0 ? [
       `- **Repository integrity:** ${formatNumber(duplicateDeclarationFindings)} duplicate declaration group(s), ${formatNumber(testParseFindings)} test-only parse diagnostic(s). These remain review findings and do not block production reachability.`,
     ] : []), "",
-    "Do not add these percentages: source intervals can overlap, and clone coverage is a refactoring measure rather than guaranteed capacity recovery. States are binary or blocked; clone similarity is a measured threshold, not confidence.", "",
-    ...(report.analysis.status === "blocked" ? ["## Why certification is blocked", "", ...renderBlockerSummary(report), ""] : []),
+    "Do not add these percentages: source intervals can overlap, and clone coverage is a refactoring measure rather than guaranteed capacity recovery. Clone similarity is a measured threshold, not confidence.", "",
+    ...(report.analysis.status === "blocked" ? ["## AST follow-up items", "", ...renderBlockerSummary(report), ""] : []),
     ...(report.analysis.findings.length > 0 ? ["## Repository integrity findings", "", ...renderIntegrityFindings(report), ""] : []),
     "## Inventory", "",
     `- ${formatNumber(report.inventory.apexFiles)} Apex files; ${formatNumber(report.inventory.productionApexCharacters)} production and ${formatNumber(report.inventory.testApexCharacters)} test characters.`,
@@ -39,6 +41,7 @@ export function renderMarkdown(report: AnalysisReport): string {
     `- ${formatNumber(report.duplicates.productionTokens)} production tokens analyzed; clone minimum ${report.duplicates.algorithm.minimumFragmentTokens} tokens; overlaps globally deduplicated.`,
     ...(report.duplicates.coverage.blockedFiles.length > 0 ? [`- Clone coverage blocked by parse diagnostics in: ${report.duplicates.coverage.blockedFiles.map((item) => `\`${item}\``).join(", ")}.`] : []),
     "- Flow metadata does not consume the Apex code-size allowance. Synchronous Flow still shares transaction governor limits.", "",
+    "## Filename reference audit", "", ...renderNameAudit(report), "",
     "## Duplicate clone families", "", ...renderCloneGroups(report), "",
     "## SOQL selector opportunities", "", ...renderQueryFamilies(report), "",
     "## Repeated DML/domain operations", "", ...renderDmlFamilies(report), "",
@@ -47,13 +50,82 @@ export function renderMarkdown(report: AnalysisReport): string {
     "## Method and constructor candidates", "", ...renderCandidateTable(members), "",
     "## Review order", "",
     report.analysis.status === "blocked"
-      ? "1. Resolve every reachability blocker shown above; do not delete deprecation candidates before certification is complete."
+      ? "1. Use the Git-unreferenced class list as the first deprecation backlog, then resolve the AST follow-up items before automated delete batches."
       : "1. Confirm the revision printed at the top and remove the largest certified repository-unreachable artifacts in tested batches.",
     "2. Re-run reachability and the Salesforce test suite after each deletion batch.",
     "3. Consolidate clone, selector, and DML families; measure the resulting source after refactoring.",
     "4. Convert only Flow paths marked eligible; every other path carries an exact reason.",
     "5. Use the JSON report for the complete evidence set; Markdown intentionally shows only the largest operational findings.", "",
   ].join("\n");
+}
+
+function renderNameAudit(report: AnalysisReport): string[] {
+  const sourceCounts = nameAuditSourceCounts(report);
+  const unreferenced = report.topLevelClassNameAudit.entries
+    .filter((entry) => !entry.testCode && !entry.referencedByName)
+    .sort((left, right) => right.sourceBytes - left.sourceBytes || left.name.localeCompare(right.name));
+  const rows = [
+    "This audit is independent from parser certification. It starts from `.cls` filenames, scans only production callers, and ignores test-only classes and test callers.",
+    "",
+    `Production class files: ${formatNumber(report.topLevelClassNameAudit.productionClasses)}; referenced by filename evidence: ${formatNumber(report.topLevelClassNameAudit.referencedProductionClasses)}; unreferenced by filename evidence: ${formatNumber(report.topLevelClassNameAudit.unreferencedProductionClasses)}.`,
+    "",
+    ...renderNameAuditSourceCounts(sourceCounts),
+    "",
+  ];
+  if (unreferenced.length === 0) return [
+    ...rows,
+    "Every production top-level class file has at least one production filename-level reference in Git.",
+  ];
+  rows.push(
+    "| Class | Raw chars | Location | Evidence rule |",
+    "|---|---:|---|---|",
+  );
+  for (const entry of unreferenced.slice(0, MARKDOWN_FINDING_LIMIT)) {
+    rows.push(`| \`${entry.name}\` | ${formatNumber(entry.sourceCharacters)} | \`${entry.path}:1\` | no filename-level production reference found |`);
+  }
+  if (unreferenced.length > MARKDOWN_FINDING_LIMIT) rows.push(`\n_${formatNumber(unreferenced.length - MARKDOWN_FINDING_LIMIT)} additional filename-unreferenced classes are retained in JSON._`);
+  return rows;
+}
+
+function renderNameAuditSourceCounts(sourceCounts: Array<{ label: string; classes: number; occurrences: number }>): string[] {
+  if (sourceCounts.length === 0) return ["No production filename-level references were found."];
+  const rows = [
+    "| What counted as production usage | Classes | Occurrences |",
+    "|---|---:|---:|",
+  ];
+  for (const item of sourceCounts) {
+    rows.push(`| ${item.label} | ${formatNumber(item.classes)} | ${formatNumber(item.occurrences)} |`);
+  }
+  return rows;
+}
+
+function nameAuditSourceCounts(report: AnalysisReport): Array<{ label: string; classes: number; occurrences: number }> {
+  const byLabel = new Map<string, { classes: Set<string>; occurrences: number }>();
+  for (const entry of report.topLevelClassNameAudit.entries.filter((item) => !item.testCode)) {
+    for (const reference of entry.references) {
+      const label = referenceLabel(reference.kind, reference.detail);
+      const current = byLabel.get(label) ?? { classes: new Set<string>(), occurrences: 0 };
+      current.classes.add(entry.path);
+      current.occurrences += 1;
+      byLabel.set(label, current);
+    }
+  }
+  return [...byLabel.entries()]
+    .map(([label, value]) => ({ label, classes: value.classes.size, occurrences: value.occurrences }))
+    .sort((left, right) => right.classes - left.classes || right.occurrences - left.occurrences || left.label.localeCompare(right.label));
+}
+
+function referenceLabel(kind: string, detail: string): string {
+  if (kind === "apex-static-member") return "Apex production code: `ClassName.member`";
+  if (kind === "apex-constructor") return "Apex production code: `new ClassName(...)`";
+  if (kind === "apex-type-literal") return "Apex production code: literal `Type.forName`";
+  if (/^LWC Apex import/i.test(detail)) return "LWC metadata import";
+  if (/^Aura/i.test(detail)) return "Aura metadata binding";
+  if (/^Flow/i.test(detail)) return "Flow Apex action";
+  if (/^Visualforce/i.test(detail)) return "Visualforce controller/action";
+  if (/^Custom Metadata/i.test(detail)) return "Custom Metadata class value";
+  if (/^Repository configuration/i.test(detail)) return "Repository metadata exact value";
+  return "Metadata binding";
 }
 
 function renderCloneGroups(report: AnalysisReport): string[] {
@@ -110,8 +182,9 @@ function renderFlowAssessments(report: AnalysisReport): string[] {
   const rows = ["| Status | Trigger | Object / events | Target | Apex chars | Apex artifact actions | Evidence |", "|---|---|---|---|---:|---|---|"];
   for (const item of report.flowMigration.assessments) {
     const evidence = item.status === "eligible" ? item.reasons.join(" ") : item.blockers.join(" ");
+    const status = item.status === "blocked" ? "needs review" : item.status;
     const artifacts = item.reclaimableArtifacts.map((artifact) => `${artifact.action}: \`${artifact.path}\``).join("<br>") || "None";
-    rows.push(`| **${item.status}** | \`${item.triggerName}\` | ${item.object}: ${item.events.join(", ")} | ${item.kind} | ${formatNumber(item.reclaimableCharacters)} | ${artifacts} | ${escapeCell(evidence)} |`);
+    rows.push(`| **${status}** | \`${item.triggerName}\` | ${item.object}: ${item.events.join(", ")} | ${item.kind} | ${formatNumber(item.reclaimableCharacters)} | ${artifacts} | ${escapeCell(evidence)} |`);
   }
   return rows;
 }
@@ -143,7 +216,7 @@ function renderBlockerSummary(report: AnalysisReport): string[] {
     else grouped.set(blocker.code, [blocker]);
   }
   const rows = [
-    "Nothing was encrypted or silently skipped. Certification stops only at the concrete source locations below. `blocked` means the analyzer has not earned the right to call the deletion list safe.",
+    "The filename audit above is still deterministic. These items only limit the stronger AST path proof because the analyzer could not read or resolve the exact construct below.",
     "",
     "| Cause | Count | Exact meaning | Locations |",
     "|---|---:|---|---|",
@@ -155,7 +228,7 @@ function renderBlockerSummary(report: AnalysisReport): string[] {
   }
   rows.push(
     "",
-    "### Exact blockers",
+    "### Exact follow-up items",
     "",
     "| Cause | Primary location | Concrete evidence |",
     "|---|---|---|",

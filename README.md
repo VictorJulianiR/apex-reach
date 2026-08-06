@@ -10,6 +10,7 @@ It does **not** send source code to an LLM or require access to a Salesforce org
 - a repository-wide class, trigger, method, and constructor symbol table;
 - resolved and conservative dependency edges with source locations;
 - production, test-only, and unreachable classifications;
+- a filename-level production class audit that starts from `.cls` file names and checks whether each class is referenced by production Git evidence;
 - shortest evidence paths from entry points to reachable symbols;
 - top-level recovery candidates with raw size, binary repository classification, and exposure flags;
 - method candidates inside live classes for refactoring;
@@ -17,15 +18,17 @@ It does **not** send source code to an LLM or require access to a Salesforce org
 - exact, parameterized, and verified near-miss clone families with non-overlapping source coverage;
 - static and constant-folded dynamic SOQL families, with runtime-dependent query sites explicitly excluded from family totals;
 - compatible DML/domain-operation families that preserve transaction and access-mode differences;
-- binary trigger-to-Flow eligibility with explicit order, bulk, transaction, recursion, security, callout, async, and coverage blockers;
+- binary trigger-to-Flow eligibility with explicit order, bulk, transaction, recursion, security, callout, async, and coverage review reasons;
 - analyzed Git branch, commit, and dirty state in every report;
 - interprocedural `Type.forName` provenance through local assignments, typed Custom Metadata retrieval, selectors, and helper/wrapper methods.
 
-The executive report keeps three lanes separate: **certified repository-unreachable Apex**, **duplicate/refactor coverage**, and **Apex proven removable by Flow conversion**. They are not added together because source intervals can overlap, and duplicate coverage is not guaranteed savings after abstraction overhead.
+The executive report keeps three lanes separate: **Git-unreferenced production classes**, **duplicate/refactor coverage**, and **Apex proven removable by Flow conversion**. They are not added together because source intervals can overlap, and duplicate coverage is not guaranteed savings after abstraction overhead.
 
-The primary result is a deterministic **closed-world repository classification**. It assumes every deployable Apex file and every metadata/configuration file that defines production calls is present in the SFDX package directories. Within that declared universe a symbol is either production-reachable, test-only, or unreachable; the tool does not assign probability. Callers outside the repository, such as an external REST client, are outside the result by definition and are listed as exposure signals instead of changing reachability.
+The leadership headline is deterministic and simple: for every production `.cls` file, the analyzer checks whether production Git contains `ClassName.member`, `new ClassName(...)`, literal `Type.forName('ClassName')`, or a supported metadata binding such as LWC, Aura, Flow, Visualforce, Custom Metadata, or exact repository configuration. Test classes and test callers are excluded. This filename audit does not depend on the Apex parser.
 
-If parsing production Apex, dynamic type construction, or unresolved calls prevent a complete reachability conclusion, the report labels deprecation candidates **not certified**, groups every blocker by concrete cause, and lists its exact file and line. Remaining dynamic-type blockers also include the unresolved value chain or the exact unversioned Custom Metadata field. Nothing is called safe while certification is blocked. Dynamic SOQL exclusions do not invalidate resolved query-family findings: the Markdown reports resolved families and excluded call sites separately. A blocker is never converted into a confidence score. Clone similarity is a reproducible threshold measurement, not probability.
+The deeper AST result is a deterministic **closed-world repository classification**. It assumes every deployable Apex file and every metadata/configuration file that defines production calls is present in the SFDX package directories. Within that declared universe a symbol is either production-reachable, test-only, or unreachable; the tool does not assign probability. Callers outside the repository, such as an external REST client, are outside the result by definition and are listed as exposure signals instead of changing reachability.
+
+If parsing production Apex, dynamic type construction, or unresolved calls prevent the stronger AST path proof, the Markdown moves those items into technical follow-up while keeping the Git-unreferenced class number intact. Dynamic SOQL exclusions do not invalidate resolved query-family findings: the Markdown reports resolved families and excluded call sites separately. A follow-up item is never converted into a confidence score. Clone similarity is a reproducible threshold measurement, not probability.
 
 When the same top-level class, trigger, or member signature exists more than once, every physical declaration receives its own identity. Calls are connected conservatively to all matching declarations, so reachability remains deterministic instead of being blocked by an ID collision. The duplicates remain explicit repository-integrity findings with every source path. Parse diagnostics in confidently identified test-only files are handled the same way: retained as findings, excluded from production certification.
 
@@ -114,7 +117,7 @@ Raw characters and UTF-8 bytes are useful offline estimates, not the exact deplo
 
 ## Validation
 
-The test suite covers reachability and metadata entry points plus clone profiles, selector families, dynamic SOQL blockers, keyword and `Database.*` DML, Flow eligibility/blockers, revision capture, report generation, and the Windows installer.
+The test suite covers reachability and metadata entry points plus the parser-independent filename audit, clone profiles, selector families, dynamic SOQL exclusions, keyword and `Database.*` DML, Flow eligibility/review reasons, revision capture, report generation, and the Windows installer.
 
 ```sh
 npm run check

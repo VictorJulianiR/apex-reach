@@ -1,10 +1,10 @@
 # Validation results
 
-Validation was rerun on 6 August 2026 with `apex-reach` 0.5.0. Repository clones and generated reports live under the ignored `validation/` directory so they do not become product dependencies.
+Validation was rerun on 6 August 2026 with `apex-reach` 0.6.0. Repository clones and generated reports live under the ignored `validation/` directory so they do not become product dependencies.
 
 ## Automated fixtures
 
-Twenty tests exercise the original reachability/installer contract plus:
+Twenty-one tests exercise the original reachability/installer contract plus:
 
 - trigger-to-handler and internal method reachability;
 - production, test-only, and unreachable classifications;
@@ -18,6 +18,7 @@ Twenty tests exercise the original reachability/installer contract plus:
 - conditional runtime overrides remaining blocked even when their default value is versioned Custom Metadata;
 - duplicate declarations receiving unique physical identities and conservative call edges without blocking certification;
 - parse diagnostics confined to `@IsTest` source remaining visible without blocking production reachability;
+- parser-independent filename audits for top-level production classes, excluding test classes and test callers;
 - probability-free candidates and exact blocker locations;
 - exclusion of `@isTest` source from the production footprint;
 - Markdown report and Windows installer behavior.
@@ -28,7 +29,7 @@ Twenty tests exercise the original reachability/installer contract plus:
 - binary Flow eligibility, callout/order blockers, and Git revision capture;
 - `this`, `new LocalType()`, unknown-chain dispatch, and `new Http().send()` collision cases.
 
-Result: 20/20 passed, with TypeScript checking and production build also passing.
+Result: 21/21 passed, with TypeScript checking and production build also passing.
 
 ## trailheadapps/apex-recipes
 
@@ -68,7 +69,7 @@ The top-level set is `fflib_RecordTypeId`, `HH_ManageHousehold_EXT`, `RP_HTTPCli
 - Full text-metadata scanning is practical on a repository with more than ten thousand metadata files.
 - Annotation and visibility exposure can be separated from actual repository calls.
 - Interface dispatch and platform callback propagation materially prevent false deletion candidates.
-- Remaining incompleteness is reduced to a short, deterministic list of reachable computed-dispatch locations rather than candidate-wide confidence scores.
+- The leadership Git-unreferenced class number is independent from parser diagnostics; AST gaps are isolated as exact technical follow-up items rather than candidate-wide confidence scores.
 - Clone, selector, and DML lanes complete on multi-million-character corpora without Java, an org, or an LLM.
 - Git revision data ties every report to the analyzed branch and commit.
 
